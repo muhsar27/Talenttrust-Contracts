@@ -6,6 +6,15 @@ Soroban smart contracts for the TalentTrust decentralized freelancer escrow prot
 
 - **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
 
+## Escrow timeout behavior
+
+- Each milestone has a deterministic `deadline_at` timestamp set at contract creation.
+- Deadline boundary is inclusive:
+  - valid while `ledger_timestamp <= deadline_at`
+  - expired when `ledger_timestamp > deadline_at`
+- Any approval or release attempt after expiry transitions the contract from `Funded` to `Disputed` and rejects the action.
+- See `docs/escrow/timeout-behavior.md` for threat model and testing notes.
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) (stable, 1.75+)

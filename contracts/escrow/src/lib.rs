@@ -20,6 +20,8 @@ pub struct Milestone {
     pub released: bool,
     pub approved_by: Option<Address>,
     pub approval_timestamp: Option<u64>,
+    /// Unix timestamp (seconds) when this milestone approval/release window expires.
+    pub deadline_at: u64,
 }
 
 #[contracttype]
@@ -64,8 +66,46 @@ pub struct MilestoneApproval {
 #[contract]
 pub struct Escrow;
 
+/// Default approval/release deadline for each milestone after contract creation.
+const DEFAULT_MILESTONE_TIMEOUT_SECS: u64 = 7 * 24 * 60 * 60;
+
 #[contractimpl]
 impl Escrow {
+    fn load_contract(env: &Env) -> EscrowContract {
+        env.storage()
+            .persistent()
+            .get(&symbol_short!("contract"))
+            .unwrap_or_else(|| panic!("Contract not found"))
+    }
+
+    fn save_contract(env: &Env, contract: &EscrowContract) {
+        env.storage()
+            .persistent()
+            .set(&symbol_short!("contract"), contract);
+    }
+
+    /// Validate milestone deadline and transition Funded -> Disputed on expiry.
+    ///
+    /// Boundary behavior:
+    /// - `timestamp <= deadline_at` is considered valid (not expired)
+    /// - `timestamp > deadline_at` is considered expired
+    fn ensure_milestone_not_expired(
+        env: &Env,
+        contract: &mut EscrowContract,
+        milestone_id: u32,
+    ) {
+        if Self::is_milestone_expired(env, contract, milestone_id) {
+            contract.status = ContractStatus::Disputed;
+            Self::save_contract(env, contract);
+            panic!("Milestone deadline has expired; contract moved to Disputed");
+        }
+    }
+
+    fn is_milestone_expired(env: &Env, contract: &EscrowContract, milestone_id: u32) -> bool {
+        let milestone = contract.milestones.get(milestone_id).unwrap();
+        env.ledger().timestamp() > milestone.deadline_at
+    }
+
     /// Create a new escrow contract with milestone release authorization
     ///
     /// # Arguments
@@ -108,6 +148,8 @@ impl Escrow {
             }
         }
 
+        let created_at = env.ledger().timestamp();
+
         // Create milestones
         let mut milestones = Vec::new(&env);
         for i in 0..milestone_amounts.len() {
@@ -116,6 +158,7 @@ impl Escrow {
                 released: false,
                 approved_by: None,
                 approval_timestamp: None,
+                deadline_at: created_at + DEFAULT_MILESTONE_TIMEOUT_SECS,
             });
         }
 
@@ -127,16 +170,14 @@ impl Escrow {
             milestones,
             status: ContractStatus::Created,
             release_auth,
-            created_at: env.ledger().timestamp(),
+            created_at,
         };
 
         // Generate contract ID (in real implementation, this would use proper storage)
         let contract_id = env.ledger().sequence();
 
         // Store contract data (simplified for this implementation)
-        env.storage()
-            .persistent()
-            .set(&symbol_short!("contract"), &contract_data);
+        Self::save_contract(&env, &contract_data);
 
         contract_id
     }
@@ -160,11 +201,7 @@ impl Escrow {
 
         // In real implementation, retrieve contract from storage
         // For now, we'll use a simplified approach
-        let contract: EscrowContract = env
-            .storage()
-            .persistent()
-            .get(&symbol_short!("contract"))
-            .unwrap_or_else(|| panic!("Contract not found"));
+        let contract: EscrowContract = Self::load_contract(&env);
 
         // Verify caller is client
         if caller != contract.client {
@@ -189,9 +226,7 @@ impl Escrow {
         // Update contract status to Funded
         let mut updated_contract = contract;
         updated_contract.status = ContractStatus::Funded;
-        env.storage()
-            .persistent()
-            .set(&symbol_short!("contract"), &updated_contract);
+        Self::save_contract(&env, &updated_contract);
 
         true
     }
@@ -221,11 +256,7 @@ impl Escrow {
         caller.require_auth();
 
         // Retrieve contract
-        let mut contract: EscrowContract = env
-            .storage()
-            .persistent()
-            .get(&symbol_short!("contract"))
-            .unwrap_or_else(|| panic!("Contract not found"));
+        let mut contract: EscrowContract = Self::load_contract(&env);
 
         // Verify contract status
         if contract.status != ContractStatus::Funded {
@@ -243,6 +274,8 @@ impl Escrow {
         if milestone.released {
             panic!("Milestone already released");
         }
+
+        Self::ensure_milestone_not_expired(&env, &mut contract, milestone_id);
 
         // Check authorization based on release_auth scheme
         let is_authorized = match contract.release_auth {
@@ -280,9 +313,7 @@ impl Escrow {
 
         // Update contract
         contract.milestones.set(milestone_id, updated_milestone);
-        env.storage()
-            .persistent()
-            .set(&symbol_short!("contract"), &contract);
+        Self::save_contract(&env, &contract);
 
         true
     }
@@ -310,11 +341,7 @@ impl Escrow {
     ) -> bool {
         caller.require_auth();
         // Retrieve contract
-        let mut contract: EscrowContract = env
-            .storage()
-            .persistent()
-            .get(&symbol_short!("contract"))
-            .unwrap_or_else(|| panic!("Contract not found"));
+        let mut contract: EscrowContract = Self::load_contract(&env);
 
         // Verify contract status
         if contract.status != ContractStatus::Funded {
@@ -332,6 +359,8 @@ impl Escrow {
         if milestone.released {
             panic!("Milestone already released");
         }
+
+        Self::ensure_milestone_not_expired(&env, &mut contract, milestone_id);
 
         // Check if milestone has sufficient approvals
         let has_sufficient_approval = match contract.release_auth {
@@ -383,9 +412,7 @@ impl Escrow {
             contract.status = ContractStatus::Completed;
         }
 
-        env.storage()
-            .persistent()
-            .set(&symbol_short!("contract"), &contract);
+        Self::save_contract(&env, &contract);
 
         // In real implementation, transfer funds to freelancer
         // For now, we'll just mark as released
@@ -397,6 +424,31 @@ impl Escrow {
     pub fn issue_reputation(_env: Env, _freelancer: Address, _rating: i128) -> bool {
         // Reputation credential issuance.
         true
+    }
+
+    /// Get the currently stored escrow contract state.
+    ///
+    /// Useful for tests, monitoring and off-chain verification of status transitions.
+    pub fn get_contract(env: Env, _contract_id: u32) -> EscrowContract {
+        Self::load_contract(&env)
+    }
+
+    /// Evaluate timeout state for a specific milestone without approval/release side effects.
+    ///
+    /// Returns `true` if the milestone is expired. If expired while contract is `Funded`,
+    /// contract status transitions to `Disputed`.
+    pub fn evaluate_milestone_timeout(env: Env, _contract_id: u32, milestone_id: u32) -> bool {
+        let mut contract = Self::load_contract(&env);
+        if milestone_id >= contract.milestones.len() {
+            panic!("Invalid milestone ID");
+        }
+
+        let expired = Self::is_milestone_expired(&env, &contract, milestone_id);
+        if expired && contract.status == ContractStatus::Funded {
+            contract.status = ContractStatus::Disputed;
+            Self::save_contract(&env, &contract);
+        }
+        expired
     }
 
     /// Hello-world style function for testing and CI.
