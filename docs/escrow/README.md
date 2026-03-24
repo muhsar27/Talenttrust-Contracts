@@ -250,6 +250,139 @@ client.issue_reputation(contract_id, 5)
 
 ---
 
+### `cancel_contract`
+
+**Signature:**
+```rust
+pub fn cancel_contract(
+    env: Env,
+    contract_id: u32,
+    caller: Address,
+) -> bool
+```
+
+**Description:**
+Safely cancels an escrow contract under agreed conditions, enabling refunds and dispute resolution.
+
+**Cancellation Policy by Status:**
+
+#### 1. **Created Status (No Funds Deposited)**
+   - **Who can cancel:** Either the client or freelancer (unilateral).
+   - **Reasoning:** No funds at risk; both parties can freely exit.
+   - **Effect:** Contract moves to `Cancelled` state. No refund needed.
+   - **Reason recorded:** `ClientInitiated` or `FreelancerInitiated`.
+
+#### 2. **Funded Status (Funds In Escrow)**
+   Multiple paths for safe cancellation:
+
+   **Option A: Client Cancels (Unilateral)**
+   - **Allowance:** Client can cancel if and only if **no milestones have been released**.
+   - **Reasoning:** Prevents freelancer from receiving partial payment then forcing cancellation.
+   - **Effect:** Funds are refunded to client. Contract moves to `Cancelled`.
+   - **Reason recorded:** `ClientInitiated`.
+
+   **Option B: Freelancer Initiates (Mutual Agreement)**
+   - **Allowance:** Freelancer can call `cancel_contract` at any time during `Funded`.
+   - **Reasoning:** Allows freelancer to exit (e.g., if unable to complete work) without requiring client approval after acceptance.
+   - **Effect:** Contract moves to `Cancelled`. Funds are returned to client.
+   - **Reason recorded:** `MutualAgreement`.
+
+   **Option C: Arbiter Approves**
+   - **Allowance:** If an arbiter exists, arbiter can cancel at any time during `Funded`.
+   - **Reasoning:** Useful for dispute resolution or third-party intervention.
+   - **Effect:** Contract moves to `Cancelled`. Funds are returned to client.
+   - **Reason recorded:** `ArbiterApproved`.
+
+#### 3. **Disputed Status**
+   - **Who can cancel:** Arbiter only (if defined).
+   - **Reasoning:** Dispute resolution requires neutral third party.
+   - **Effect:** Contract moves to `Cancelled`. Funds are returned to client.
+   - **Reason recorded:** `ArbiterApproved`.
+
+#### 4. **Completed Status**
+   - **Who can cancel:** No one.
+   - **Reasoning:** Contract fully executed; cancellation would violate final settlement.
+   - **Effect:** Panics with `"Cannot cancel a completed contract"`.
+
+#### 5. **Already Cancelled**
+   - **Who can cancel:** No one.
+   - **Reasoning:** Double-cancellation would corrupt audit trail.
+   - **Effect:** Panics with `"Contract already cancelled"`.
+
+**Constraints:**
+
+- **Atomicity:** Status change, reason, timestamp, and handler address are recorded together in a single transaction.
+- **Immutability:** Once cancelled, a contract cannot transition back to `Created` or `Funded`.
+- **Event Emission:** On success, emits `contract_cancelled` event for audit trail.
+- **Authorization:** Governed by strict policy per status (see above).
+
+**Behavior:**
+- Requires caller authentication (`require_auth()`).
+- Transitions contract status to `Cancelled`.
+- Records `cancellation_reason`, `cancelled_at`, and `cancelled_by`.
+- Emits a `contract_cancelled` event for off-chain tracking.
+- Returns `true` on success.
+
+**Panics:**
+- If contract does not exist: `"Contract not found"`.
+- If contract is already cancelled: `"Contract already cancelled"`.
+- If contract is completed: `"Cannot cancel a completed contract"`.
+- If in `Created` state and caller is neither client nor freelancer: `"Caller must be client or freelancer to cancel in Created state"`.
+- If in `Funded` state, client tries to cancel after any release: `"Client cannot cancel after milestones have been released"`.
+
+**Examples:**
+
+```
+// Example 1: Cancel in Created state (freelancer exits early)
+contract = create_contract(client, freelancer, [1000])
+cancel_contract(1, freelancer)  // Freelancer calls
+-> true; reason = FreelancerInitiated
+
+// Example 2: Cancel in Funded state (client refunds before work)
+contract = create_contract(client, freelancer, [1000])
+deposit_funds(1, 1000)
+cancel_contract(1, client)  // Client calls before any release
+-> true; reason = ClientInitiated
+
+// Example 3: Arbiter cancels due to dispute
+contract = create_contract(client, freelancer, [1000], arbiter=arbiter)
+deposit_funds(1, 1000)
+cancel_contract(1, arbiter)  // Arbiter intervenes
+-> true; reason = ArbiterApproved
+```
+
+---
+
+### `get_contract`
+
+**Signature:**
+```rust
+pub fn get_contract(
+    env: Env,
+    contract_id: u32,
+) -> EscrowContract
+```
+
+**Description:**
+Retrieves the full contract data including status, cancellation details, and milestones.
+
+**Behavior:**
+- Returns the complete `EscrowContract` structure.
+- Useful for state queries and verification.
+
+**Panics:**
+- If contract does not exist: `"Contract not found"`.
+
+**Example:**
+```
+contract = get_contract(1)
+if contract.status == Cancelled {
+    println!("Cancelled by {:?}", contract.cancelled_by);
+}
+```
+
+---
+
 ### `hello`
 
 **Signature:**
@@ -273,13 +406,21 @@ hello(symbol_short!("World")) -> Symbol("World")
 ## Lifecycle Summary
 
 ```
-1. Created    - Contract created by client and freelancer agreement.
-2. Funded     - Client deposits funds into escrow.
-3. Released   - Client releases each milestone as work is completed.
-4. Completed  - Contract marked complete after all funds are released.
-5. Reputation - On-chain credential issued to freelancer history.
+Main Flow:
+1. Created    -> Funded        (client deposits)
+2. Funded     -> Released      (client releases milestones)
+3. Released   -> Completed     (all milestones released)
+4. Completed  -> Reputation    (freelancer reputation issued)
 
-Flow: Created -> Funded -> Released -> Completed -> Reputation
+Alternative Flows:
+- Created     -> Cancelled (either party exits early, no funds)
+- Funded      -> Cancelled (refund scenarios, client/arbiter/freelancer)
+- Disputed    -> Cancelled (arbiter resolution)
+
+Key Transitions:
+Created -> Funded -> Completed
+   |        |           |
+   +------> Cancelled <--+-- Disputed
 ```
 
 ---
@@ -288,12 +429,89 @@ Flow: Created -> Funded -> Released -> Completed -> Reputation
 
 ### Access Control Summary
 
+| Function | Caller | Auth Required | Notes |
+|----------|--------|---------------|-------|
+| `create_contract` | Anyone | No | Creates contract |
+| `deposit_funds` | Client only | Yes | Moves to Funded |
+| `approve_milestone_release` | Varies | Yes | By authorization scheme |
+| `release_milestone` | Varies | Yes | By authorization scheme |
+| `cancel_contract` | Varies | Yes | By contract status and policy (see below) |
+| `get_contract` | Anyone | No | Read-only query |
+| `issue_reputation` | Anyone | No* | Gated by contract state |
+| `hello` | Anyone | No | Echo/test only |
+
+**\* `issue_reputation` notes:** No explicit auth check, but gated by:
+- Contract must exist
+- Contract must be `Completed`
+- All milestones must be released
+- Reputation flag must not be set
+
+### Cancellation Authorization Policy
+
+| Contract Status | Cancelled By | Condition | Reason Code |
+|-----------------|--------------|-----------|-------------|
+| **Created** | Client | Always | `ClientInitiated` |
+| **Created** | Freelancer | Always | `FreelancerInitiated` |
+| **Funded** | Client | No releases | `ClientInitiated` |
+| **Funded** | Freelancer | Always | `MutualAgreement` |
+| **Funded** | Arbiter | If defined | `ArbiterApproved` |
+| **Disputed** | Arbiter | If defined | `ArbiterApproved` |
+| **Completed** | ❌ No one | Forbidden | N/A |
+| **Cancelled** | ❌ No one | Forbidden (double-cancel) | N/A |
+
+---
+
+## Data Structures - Full Reference
+
+### `ContractStatus` Enum
+```rust
+pub enum ContractStatus {
+    Created = 0,    // Awaiting deposit
+    Funded = 1,     // Funds deposited; work in progress
+    Completed = 2,  // All milestones released; final
+    Disputed = 3,   // Dispute raised; payments paused
+    Cancelled = 4,  // Contract cancelled; funds returned
+}
+```
+
+### `CancellationReason` Enum
+```rust
+pub enum CancellationReason {
+    MutualAgreement = 0,    // Both parties agreed
+    ClientInitiated = 1,    // Client initiated (no releases)
+    FreelancerInitiated = 2, // Freelancer initiated
+    ArbiterApproved = 3,    // Arbiter approved
+    TimeoutExpired = 4,     // Timeout (future)
+}
+```
+
+### `EscrowContract` Struct (Extended)
+```rust
+pub struct EscrowContract {
+    pub client: Address,                      // Client party
+    pub freelancer: Address,                  // Freelancer party
+    pub arbiter: Option<Address>,             // Optional dispute resolver
+    pub milestones: Vec<Milestone>,           // Deliverables & payments
+    pub status: ContractStatus,               // Current status
+    pub release_auth: ReleaseAuthorization,  // Release authorization scheme
+    pub created_at: u64,                      // Creation timestamp
+    pub cancellation_reason: Option<CancellationReason>,  // Why cancelled (if applicable)
+    pub cancelled_at: Option<u64>,            // When cancelled (if applicable)
+    pub cancelled_by: Option<Address>,        // Who cancelled (if applicable)
+}
+```
+
+---
+
+## Access Control Summary (Previous Section)
+
 | Function | Caller | Auth Required |
 |----------|--------|---------------|
 | `create_contract` | Anyone | No |
 | `deposit_funds` | Client only | Yes (`client.require_auth()`) |
 | `release_milestone` | Client only | Yes (`client.require_auth()`) |
 | `complete_contract` | Client only | Yes (`client.require_auth()`) |
+| `cancel_contract` | Varies | Yes (strict policy) |
 | `issue_reputation` | Anyone | No* |
 | `hello` | Anyone | No |
 
