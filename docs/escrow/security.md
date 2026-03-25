@@ -1,54 +1,38 @@
-# Escrow Security Notes
+# Escrow Pause/Emergency Threat Model
 
-This document describes assumptions, controls, and threat scenarios for `contracts/escrow`.
+## Scope
 
-## Security Controls Implemented
+This model covers pause and emergency controls in `contracts/escrow/src/lib.rs`.
 
-- Authorization checks on state-mutating flows:
-  - `create_contract`: requires `client` auth.
-  - `deposit_funds`: requires stored contract client auth.
-  - `release_milestone`: requires stored contract client auth.
-  - `issue_reputation`: requires stored contract client auth.
-- Input validation:
-  - participant addresses must differ.
-  - milestone list must be non-empty.
-  - milestone amounts must be strictly positive.
-  - deposit amount must be strictly positive.
-  - rating must be in `[1, 5]`.
-- State-machine validation:
-  - release requires funded state.
-  - issue reputation requires completed state.
-  - reputation can be issued once per contract.
-- Funds integrity checks:
-  - funded amount cannot exceed milestone total.
-  - milestone release requires sufficient funded-minus-released balance.
-  - double-release for the same milestone is rejected.
-- Arithmetic safety:
-  - all accumulators use checked arithmetic with explicit overflow error handling.
+## Assumptions
+
+- The admin key is securely managed.
+- Soroban address authentication behaves as expected.
+- Off-chain operators monitor incidents and invoke controls quickly.
 
 ## Threat Scenarios and Mitigations
 
-- Unauthorized state changes:
-  - Mitigated by `require_auth` on all mutating entrypoints.
-- Over-funding / balance drift:
-  - Mitigated by explicit cap `funded_amount <= total_amount`.
-- Premature or duplicate payouts:
-  - Mitigated by contract status checks and per-milestone `released` flag.
-- Out-of-range reputation manipulation:
-  - Mitigated by rating bounds and one-issuance-per-contract enforcement.
-- DoS via pathological milestone release scanning:
-  - Mitigated by storing `released_milestones` and `milestone_count`, allowing O(1) completion check.
+1. Unauthorized pause/unpause/emergency calls.
+Mitigation: `require_admin` gate with address auth on all control endpoints.
 
-## Remaining Assumptions / Out-of-Scope
+2. Re-initialization to seize control.
+Mitigation: `initialize` is single-use and returns `AlreadyInitialized` on repeat calls.
 
-- Token transfer integration is not part of this module yet (balance accounting is logical contract state).
-- Dispute workflow (`ContractStatus::Disputed`) is reserved for future implementation.
-- Final transaction-fee accuracy should be validated with network simulation tooling before production deployment.
+3. Partial recovery from emergency state.
+Mitigation: `unpause` returns `EmergencyActive` while emergency flag is set.
 
-## Test Coverage Areas
+4. State-changing execution during incident containment.
+Mitigation: all critical mutating endpoints check `ensure_not_paused`.
 
-Tests are organized in:
+## Residual Risks
 
-- `contracts/escrow/src/test/flows.rs` for happy paths and state persistence.
-- `contracts/escrow/src/test/security.rs` for edge cases, invalid inputs, and failure paths.
-- `contracts/escrow/src/test/performance.rs` for resource and fee regression baselines.
+- Admin key compromise can still misuse pause controls.
+- No timelock/multi-sig enforced in this contract version.
+- Emergency actions are not event-logged in this baseline implementation.
+
+## Recommended Next Hardening Steps
+
+1. Move admin to a multi-sig account.
+2. Add role separation for `pauser` and `resolver`.
+3. Add on-chain event emission for pause state transitions.
+4. Add optional time-delayed unpause for high-severity incidents.

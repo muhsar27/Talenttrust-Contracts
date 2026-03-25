@@ -1,4 +1,10 @@
-use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
+#![cfg(test)]
+
+use soroban_sdk::{
+    symbol_short,
+    testutils::{Address as _, MockAuth, MockAuthInvoke},
+    vec, Address, Env, IntoVal,
+};
 
 use crate::{Escrow, EscrowClient, ReleaseAuthorization};
 
@@ -13,11 +19,11 @@ fn test_hello() {
 }
 
 #[test]
-fn test_create_contract() {
+fn test_create_contract_success() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
-
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
@@ -511,3 +517,6 @@ fn test_edge_cases() {
     );
     assert_eq!(id2, 0); // ledger sequence stays the same in test env
 }
+
+mod emergency_controls;
+mod pause_controls;

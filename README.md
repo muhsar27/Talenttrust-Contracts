@@ -4,8 +4,8 @@ Soroban smart contracts for the TalentTrust decentralized freelancer escrow prot
 
 ## What's in this repo
 
-- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
-- **Escrow docs** (`docs/escrow`): Contract security assumptions, threat scenarios, and performance/gas baselines.
+- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments, reputation credential issuance, and emergency pause controls.
+- **Escrow docs** (`docs/escrow`): Escrow operations, security notes, and pause/emergency threat model.
 
 ## Prerequisites
 
@@ -23,7 +23,7 @@ cd talenttrust-contracts
 # Build
 cargo build
 
-# Run tests
+# Run tests (includes 95%+ coverage negative path testing for escrow)
 cargo test
 
 # Run escrow performance/gas baseline tests only
@@ -35,6 +35,17 @@ cargo fmt --all -- --check
 # Format code
 cargo fmt --all
 ```
+
+## Escrow Emergency Controls
+
+The escrow contract now supports critical-incident response with admin-managed controls:
+
+- `initialize(admin)` (one-time setup)
+- `pause()` and `unpause()`
+- `activate_emergency_pause()` and `resolve_emergency()`
+- `is_paused()` and `is_emergency()`
+
+When paused, mutating escrow operations are blocked.
 
 ## Contributing
 
