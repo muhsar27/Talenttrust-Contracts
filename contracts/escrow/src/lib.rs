@@ -1,8 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, symbol_short, Address, Env, Map, Symbol, Vec,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
 
 const DEFAULT_MIN_MILESTONE_AMOUNT: i128 = 1;
 const DEFAULT_MAX_MILESTONES: u32 = 16;
@@ -69,47 +67,18 @@ pub enum ContractStatus {
 pub struct Milestone {
     pub amount: i128,
     pub released: bool,
-    pub approved_by: Option<Address>,
-    pub approval_timestamp: Option<u64>,
 }
 
-#[contracttype]
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ReleaseAuthorization {
-    ClientOnly = 0,
-    ClientAndArbiter = 1,
-    ArbiterOnly = 2,
-    MultiSig = 3,
-}
-
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct EscrowContract {
-    pub client: Address,
-    pub freelancer: Address,
-    pub arbiter: Option<Address>,
-    pub milestones: Vec<Milestone>,
-    pub status: ContractStatus,
-    pub release_auth: ReleaseAuthorization,
-    pub created_at: u64,
-}
-
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub enum Approval {
-    None = 0,
-    Client = 1,
-    Arbiter = 2,
-    Both = 3,
-}
-
-#[contracttype]
-#[derive(Clone, Debug)]
-pub struct MilestoneApproval {
-    pub milestone_id: u32,
-    pub approvals: Map<Address, bool>,
-    pub required_approvals: u32,
-    pub approval_status: Approval,
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum EscrowError {
+    InvalidContractId = 1,
+    InvalidMilestoneId = 2,
+    InvalidAmount = 3,
+    InvalidRating = 4,
+    EmptyMilestones = 5,
+    InvalidParticipant = 6,
 }
 
 #[contracttype]
@@ -399,15 +368,18 @@ impl Escrow {
         if milestone_amounts.is_empty() {
             panic!("At least one milestone required");
         }
+        Ok(())
+    }
 
-        if client == freelancer {
-            panic!("Client and freelancer cannot be the same address");
+    fn ensure_valid_milestones(milestone_amounts: &Vec<i128>) -> Result<(), EscrowError> {
+        if milestone_amounts.is_empty() {
+            return Err(EscrowError::EmptyMilestones);
         }
 
         for i in 0..milestone_amounts.len() {
             let amount = milestone_amounts.get(i).unwrap();
             if amount <= 0 {
-                panic!("Milestone amounts must be positive");
+                return Err(EscrowError::InvalidAmount);
             }
         }
 
@@ -458,14 +430,20 @@ impl Escrow {
         if contract.status != ContractStatus::Created {
             panic!("Contract must be in Created status to deposit funds");
         }
+        Ok(())
+    }
 
         let mut total_required = 0i128;
         for i in 0..contract.milestones.len() {
             total_required += contract.milestones.get(i).unwrap().amount;
         }
+        Ok(())
+    }
 
-        if amount != total_required {
-            panic!("Deposit amount must equal total milestone amounts");
+    fn ensure_valid_milestone_id(milestone_id: u32) -> Result<(), EscrowError> {
+        // `u32::MAX` is reserved as an invalid sentinel in this placeholder implementation.
+        if milestone_id == u32::MAX {
+            return Err(EscrowError::InvalidMilestoneId);
         }
 
         let mut updated_contract = contract;
@@ -476,6 +454,7 @@ impl Escrow {
 
         true
     }
+}
 
     /// Approve a milestone for release with proper authorization.
     pub fn approve_milestone_release(
@@ -528,6 +507,7 @@ impl Escrow {
         {
             panic!("Milestone already approved by this address");
         }
+        Self::ensure_valid_milestones(&milestone_amounts)?;
 
         let mut updated_milestone = milestone;
         updated_milestone.approved_by = Some(caller);
@@ -543,9 +523,8 @@ impl Escrow {
 
     /// Release a milestone payment to the freelancer after proper authorization.
     pub fn release_milestone(
-        env: Env,
-        _contract_id: u32,
-        caller: Address,
+        _env: Env,
+        contract_id: u32,
         milestone_id: u32,
     ) -> bool {
         Self::ensure_not_paused(&env);
