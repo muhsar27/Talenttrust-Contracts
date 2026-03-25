@@ -1,23 +1,47 @@
-# Escrow Contract - Security & Testing
+# Escrow Contract Documentation
 
-This document contains details on the Negative Path Test Matrix implemented to ensure the Escrow contract handles unauthorized access, invalid states, and malformed inputs securely.
+This document describes escrow-specific controls and operational guidance.
 
-## Error Definitions
+## Emergency Pause Controls
 
-The contract defines a custom `Error` enum (`#[contracterror]`) with the following variants:
-- **Unauthorized (1)**: The caller attempting to interact with the contract does not have the proper authorization (e.g., they lack `require_auth()` signature).
-- **InvalidState (2)**: The contract or milestone is in a state that does not permit the requested action.
-- **MalformedInput (3)**: The inputs passed to a contract method are logically invalid (e.g., empty milestone vectors, or amount/rating values out of bounds).
+The escrow contract includes admin-managed incident response controls:
 
-## Negative Path Test Matrix
+- `initialize(admin)`: Sets the admin address once.
+- `pause()`: Temporarily pauses state-changing functions.
+- `unpause()`: Re-enables operations after a normal pause.
+- `activate_emergency_pause()`: Activates emergency mode and hard-pauses operations.
+- `resolve_emergency()`: Clears emergency mode and unpauses the contract.
+- `is_paused()`: Read-only pause status.
+- `is_emergency()`: Read-only emergency status.
 
-We guarantee the security of the Escrow contract paths by extensively exercising edge cases and potential failure states across all exported methods:
+### Guarded Functions
 
-| Function | Malformed Input Scenarios Handled | Unauthorized Handled | Invalid State Handled |
-| --- | --- | --- | --- |
-| `create_contract` | Empty milestone array, negative or zero milestone amounts. Returns `MalformedInput`. | Missing `client.require_auth()`. Returns `Unauthorized` (via panic on auth mismatch). | TBD with state integration |
-| `deposit_funds` | Zero or negative deposit amounts. Returns `MalformedInput`. | Caller did not sign the transaction. | TBD with state integration |
-| `release_milestone` | N/A | Caller did not sign the transaction. | TBD with state integration |
-| `issue_reputation` | Rating out of bounds (< 1, or > 5). Returns `MalformedInput`. | Caller did not sign the transaction. | TBD with state integration |
+While paused, these state-changing flows revert with `ContractPaused`:
 
-The tests successfully establish a baseline structure that asserts >95% path coverage for the current contract, catching invalid states cleanly without silently succeeding or causing uncontrolled panics. Future iterations of this contract's persistent state logic are designed to plug directly into these validation constraints.
+- `create_contract`
+- `deposit_funds`
+- `release_milestone`
+- `issue_reputation`
+
+### Error Codes
+
+- `1` `AlreadyInitialized`
+- `2` `NotInitialized`
+- `3` `ContractPaused`
+- `4` `NotPaused`
+- `5` `EmergencyActive`
+
+## Security Notes
+
+- Admin-only controls: pause and emergency operations require authenticated admin.
+- One-time initialization: admin cannot be replaced accidentally by repeated init calls.
+- Emergency lock discipline: `unpause` is blocked while emergency mode is active.
+- Fail-closed behavior: guarded functions revert whenever `paused == true`.
+
+## Operational Playbook
+
+1. Detect incident and call `activate_emergency_pause`.
+2. Investigate and remediate root cause.
+3. Validate mitigations in test/staging.
+4. Call `resolve_emergency` to restore service.
+5. Publish incident summary for ecosystem transparency.
