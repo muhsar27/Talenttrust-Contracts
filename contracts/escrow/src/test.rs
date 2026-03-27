@@ -1,68 +1,32 @@
-use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env, Vec};
 
 use crate::{Escrow, EscrowClient};
 
-#[test]
-fn test_hello() {
-    let env = Env::default();
+pub(crate) const MILESTONE_ONE: i128 = 200_0000000;
+pub(crate) const MILESTONE_TWO: i128 = 400_0000000;
+pub(crate) const MILESTONE_THREE: i128 = 600_0000000;
+
+pub(crate) fn register_client(env: &Env) -> EscrowClient<'_> {
     let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let result = client.hello(&symbol_short!("World"));
-    assert_eq!(result, symbol_short!("World"));
+    EscrowClient::new(env, &contract_id)
 }
 
-#[test]
-fn test_create_contract() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
-    let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
-
-    let id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-    assert_eq!(id, 1);
+pub(crate) fn default_milestones(env: &Env) -> Vec<i128> {
+    vec![&env, MILESTONE_ONE, MILESTONE_TWO, MILESTONE_THREE]
 }
 
-#[test]
-fn test_deposit_funds() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let result = client.deposit_funds(&1, &1_000_0000000);
-    assert!(result);
+pub(crate) fn total_milestone_amount() -> i128 {
+    MILESTONE_ONE + MILESTONE_TWO + MILESTONE_THREE
 }
 
-#[test]
-fn test_release_milestone() {
-    let env = Env::default();
-    let contract_id = env.register(Escrow, ());
-    let client = EscrowClient::new(&env, &contract_id);
-
-    let result = client.release_milestone(&1, &0);
-    assert!(result);
+pub(crate) fn generated_participants(env: &Env) -> (Address, Address) {
+    (Address::generate(env), Address::generate(env))
 }
 
-#[test]
-#[should_panic(expected = "ArithmeticOverflow")]
-fn test_overflow_on_deposit() {
-    let env = Env::default();
-    let contract_id = env.register_contract(None, EscrowContract);
-    let client = EscrowContractClient::new(&env, &contract_id);
-
-    // Use maximum value of i128 to trigger overflow on addition
-    let max_val = i128::MAX;
-    client.deposit(&max_val, &1); // Should fail when adding even 1
+pub(crate) fn world_symbol() -> soroban_sdk::Symbol {
+    symbol_short!("World")
 }
 
-#[test]
-fn test_underflow_protection() {
-    let env = Env::default();
-    // ... setup ...
-    // Attempting to release more than the balance should trigger ArithmeticOverflow
-    let result = client.try_release_payment(&1000); 
-    assert_eq!(result, Err(Ok(Error::ArithmeticOverflow)));
-}
+mod flows;
+mod security;
+mod storage;
