@@ -62,6 +62,8 @@ pub enum EscrowError {
     InvalidParticipant = 6,
 }
 
+/// Defines the security authorization scheme required to approve and release milestones.
+/// Carefully review the threat model associated with each scheme.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 enum DataKey {
@@ -79,6 +81,7 @@ pub struct EscrowContractData {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct EscrowRecord {
     pub client: Address,
+    /// The party performing work and receiving funds.
     pub freelancer: Address,
     pub milestones: Vec<Milestone>,
     pub milestone_count: u32,
@@ -205,6 +208,7 @@ pub enum DataKey {
     NextId,
 }
 
+/// The Escrow contract implementation.
 #[contract]
 pub struct Escrow;
 
@@ -274,10 +278,16 @@ impl Escrow {
     /// * `freelancer` - Address of the freelancer who receives payments
     /// * `arbiter` - Optional arbiter address for dispute resolution
     /// * `milestone_amounts` - Vector of milestone payment amounts
-    /// * `release_auth` - Authorization scheme for milestone releases
+    /// * `release_auth` - Security authorization scheme for milestone releases
     ///
     /// # Returns
     /// Contract ID for the newly created escrow
+    ///
+    /// # Security & Threat Scenarios
+    /// - **Sybil/Self-Dealing**: `client` and `freelancer` cannot be the same address.
+    /// - **Integer Underflow/Griefing**: Disallows zero or negative milestone amounts.
+    /// - **Phishing**: The caller pays for setup but funds are not extracted automatically.
+    ///   A separate `deposit_funds` call is required to actually lock value.
     ///
     /// # Errors
     /// Panics if:
