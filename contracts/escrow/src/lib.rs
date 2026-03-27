@@ -1,8 +1,6 @@
 #![no_std]
 
-use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec,
-};
+use soroban_sdk::{contract, contracterror, contractimpl, contracttype, Address, Env, Symbol, Vec};
 
 /// Maximum fee basis points (100% = 10000 basis points)
 pub const MAX_FEE_BASIS_POINTS: u32 = 10000;
@@ -121,8 +119,12 @@ impl Escrow {
         admin.require_auth();
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::Paused, &false);
-        env.storage().instance().set(&DataKey::EmergencyPaused, &false);
-        env.storage().persistent().set(&DataKey::NextContractId, &0u32);
+        env.storage()
+            .instance()
+            .set(&DataKey::EmergencyPaused, &false);
+        env.storage()
+            .persistent()
+            .set(&DataKey::NextContractId, &0u32);
         true
     }
 
@@ -138,21 +140,27 @@ impl Escrow {
 
     pub fn unpause(env: Env) -> bool {
         Self::require_admin(&env);
-        if Self::is_emergency_internal(&env) { panic!("Emergency pause active"); }
+        if Self::is_emergency_internal(&env) {
+            panic!("Emergency pause active");
+        }
         env.storage().instance().set(&DataKey::Paused, &false);
         true
     }
 
     pub fn activate_emergency_pause(env: Env) -> bool {
         Self::require_admin(&env);
-        env.storage().instance().set(&DataKey::EmergencyPaused, &true);
+        env.storage()
+            .instance()
+            .set(&DataKey::EmergencyPaused, &true);
         env.storage().instance().set(&DataKey::Paused, &true);
         true
     }
 
     pub fn resolve_emergency(env: Env) -> bool {
         Self::require_admin(&env);
-        env.storage().instance().set(&DataKey::EmergencyPaused, &false);
+        env.storage()
+            .instance()
+            .set(&DataKey::EmergencyPaused, &false);
         env.storage().instance().set(&DataKey::Paused, &false);
         true
     }
@@ -186,7 +194,9 @@ impl Escrow {
 
         let mut milestones = Vec::new(&env);
         for amount in milestone_amounts.iter() {
-            if amount <= 0 { env.panic_with_error(EscrowError::InvalidAmount); }
+            if amount <= 0 {
+                env.panic_with_error(EscrowError::InvalidAmount);
+            }
             milestones.push_back(Milestone {
                 amount,
                 released: false,
@@ -206,8 +216,12 @@ impl Escrow {
             created_at: env.ledger().timestamp(),
         };
 
-        env.storage().persistent().set(&DataKey::Contract(contract_id), &contract_data);
-        env.storage().persistent().set(&DataKey::NextContractId, &(contract_id + 1));
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract_data);
+        env.storage()
+            .persistent()
+            .set(&DataKey::NextContractId, &(contract_id + 1));
 
         // Indexing
         Self::add_to_participant_index(&env, &client, contract_id);
@@ -222,8 +236,12 @@ impl Escrow {
         caller.require_auth();
 
         let mut contract = Self::load_contract(&env, contract_id);
-        if caller != contract.client { panic!("Only client can deposit funds"); }
-        if contract.status != ContractStatus::Created { panic!("Contract already funded"); }
+        if caller != contract.client {
+            panic!("Only client can deposit funds");
+        }
+        if contract.status != ContractStatus::Created {
+            panic!("Contract already funded");
+        }
 
         let mut total_required = 0i128;
         for m in contract.milestones.iter() {
@@ -235,33 +253,52 @@ impl Escrow {
         let old_status = contract.status;
         contract.status = ContractStatus::Funded;
         Self::save_contract(&env, contract_id, &contract);
-        
+
         Self::update_status_index(&env, contract_id, Some(old_status), ContractStatus::Funded);
         true
     }
 
-    pub fn approve_milestone_release(env: Env, contract_id: u32, caller: Address, milestone_id: u32) -> bool {
+    pub fn approve_milestone_release(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        milestone_id: u32,
+    ) -> bool {
         Self::ensure_not_paused(&env);
         caller.require_auth();
 
         let mut contract = Self::load_contract(&env, contract_id);
-        if contract.status != ContractStatus::Funded { panic!("Contract not in Funded status"); }
-        if milestone_id >= contract.milestones.len() { panic!("Invalid milestone ID"); }
+        if contract.status != ContractStatus::Funded {
+            panic!("Contract not in Funded status");
+        }
+        if milestone_id >= contract.milestones.len() {
+            panic!("Invalid milestone ID");
+        }
 
         let mut milestone = contract.milestones.get(milestone_id).unwrap();
-        if milestone.released { panic!("Milestone already released"); }
+        if milestone.released {
+            panic!("Milestone already released");
+        }
 
         let is_authorized = match contract.release_auth {
             ReleaseAuthorization::ClientOnly => caller == contract.client,
-            ReleaseAuthorization::ArbiterOnly => contract.arbiter.as_ref().map_or(false, |a| caller == *a),
-            ReleaseAuthorization::ClientAndArbiter | ReleaseAuthorization::MultiSig => 
-                caller == contract.client || contract.arbiter.as_ref().map_or(false, |a| caller == *a),
+            ReleaseAuthorization::ArbiterOnly => {
+                contract.arbiter.as_ref().map_or(false, |a| caller == *a)
+            }
+            ReleaseAuthorization::ClientAndArbiter | ReleaseAuthorization::MultiSig => {
+                caller == contract.client
+                    || contract.arbiter.as_ref().map_or(false, |a| caller == *a)
+            }
         };
 
         if !is_authorized {
             panic!("Caller not authorized to approve milestone release");
         }
-        if milestone.approved_by.as_ref().map_or(false, |a| *a == caller) {
+        if milestone
+            .approved_by
+            .as_ref()
+            .map_or(false, |a| *a == caller)
+        {
             panic!("Milestone already approved by this address");
         }
 
@@ -272,26 +309,47 @@ impl Escrow {
         true
     }
 
-    pub fn release_milestone(env: Env, contract_id: u32, caller: Address, milestone_id: u32) -> bool {
+    pub fn release_milestone(
+        env: Env,
+        contract_id: u32,
+        caller: Address,
+        milestone_id: u32,
+    ) -> bool {
         Self::ensure_not_paused(&env);
         caller.require_auth();
 
         let mut contract = Self::load_contract(&env, contract_id);
-        if contract.status != ContractStatus::Funded { panic!("Contract not in Funded status"); }
-        if milestone_id >= contract.milestones.len() { panic!("Invalid milestone ID"); }
+        if contract.status != ContractStatus::Funded {
+            panic!("Contract not in Funded status");
+        }
+        if milestone_id >= contract.milestones.len() {
+            panic!("Invalid milestone ID");
+        }
 
         let mut milestone = contract.milestones.get(milestone_id).unwrap();
-        if milestone.released { panic!("Milestone already released"); }
+        if milestone.released {
+            panic!("Milestone already released");
+        }
 
         let has_sufficient_approval = match contract.release_auth {
-            ReleaseAuthorization::ClientOnly => milestone.approved_by.as_ref().map_or(false, |a| *a == contract.client),
-            ReleaseAuthorization::ArbiterOnly => contract.arbiter.as_ref().map_or(false, |arb| milestone.approved_by.as_ref().map_or(false, |a| *a == *arb)),
+            ReleaseAuthorization::ClientOnly => milestone
+                .approved_by
+                .as_ref()
+                .map_or(false, |a| *a == contract.client),
+            ReleaseAuthorization::ArbiterOnly => contract.arbiter.as_ref().map_or(false, |arb| {
+                milestone.approved_by.as_ref().map_or(false, |a| *a == *arb)
+            }),
             ReleaseAuthorization::ClientAndArbiter => {
-                // For simplicity in this implementation, we require both if both are set? 
+                // For simplicity in this implementation, we require both if both are set?
                 // No, original code suggested either.
-                milestone.approved_by.as_ref().map_or(false, |a| a == &contract.client || contract.arbiter.as_ref().map_or(false, |arb| a == arb))
-            },
-            ReleaseAuthorization::MultiSig => milestone.approved_by.as_ref().map_or(false, |a| *a == contract.client),
+                milestone.approved_by.as_ref().map_or(false, |a| {
+                    a == &contract.client || contract.arbiter.as_ref().map_or(false, |arb| a == arb)
+                })
+            }
+            ReleaseAuthorization::MultiSig => milestone
+                .approved_by
+                .as_ref()
+                .map_or(false, |a| *a == contract.client),
         };
 
         if !has_sufficient_approval {
@@ -305,7 +363,12 @@ impl Escrow {
         if all_released {
             let old_status = contract.status;
             contract.status = ContractStatus::Completed;
-            Self::update_status_index(&env, contract_id, Some(old_status), ContractStatus::Completed);
+            Self::update_status_index(
+                &env,
+                contract_id,
+                Some(old_status),
+                ContractStatus::Completed,
+            );
         }
 
         Self::save_contract(&env, contract_id, &contract);
@@ -316,28 +379,39 @@ impl Escrow {
         Self::load_contract(&env, contract_id)
     }
 
-    pub fn hello(_env: Env, to: Symbol) -> Symbol { to }
+    pub fn hello(_env: Env, to: Symbol) -> Symbol {
+        to
+    }
 
     /// Returns a list of contract IDs associated with a participant (client or freelancer).
-    /// 
+    ///
     /// # Arguments
     /// * `participant` - The Address of the participant to query.
     pub fn get_contracts_by_participant(env: Env, participant: Address) -> Vec<u32> {
-        env.storage().persistent().get(&DataKey::ParticipantContracts(participant)).unwrap_or(Vec::new(&env))
+        env.storage()
+            .persistent()
+            .get(&DataKey::ParticipantContracts(participant))
+            .unwrap_or(Vec::new(&env))
     }
 
     /// Returns a list of contract IDs that currently have the specified status.
-    /// 
+    ///
     /// # Arguments
     /// * `status` - The ContractStatus to query.
     pub fn get_contracts_by_status(env: Env, status: ContractStatus) -> Vec<u32> {
-        env.storage().persistent().get(&DataKey::StatusContracts(status as u32)).unwrap_or(Vec::new(&env))
+        env.storage()
+            .persistent()
+            .get(&DataKey::StatusContracts(status as u32))
+            .unwrap_or(Vec::new(&env))
     }
 }
 
 impl Escrow {
     fn read_admin(env: &Env) -> Address {
-        env.storage().instance().get(&DataKey::Admin).unwrap_or_else(|| panic!("Pause controls are not initialized"))
+        env.storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic!("Pause controls are not initialized"))
     }
 
     fn require_admin(env: &Env) {
@@ -345,41 +419,70 @@ impl Escrow {
     }
 
     fn is_paused_internal(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::Paused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::Paused)
+            .unwrap_or(false)
     }
 
     fn is_emergency_internal(env: &Env) -> bool {
-        env.storage().instance().get(&DataKey::EmergencyPaused).unwrap_or(false)
+        env.storage()
+            .instance()
+            .get(&DataKey::EmergencyPaused)
+            .unwrap_or(false)
     }
 
     fn ensure_not_paused(env: &Env) {
-        if Self::is_paused_internal(env) { panic!("Contract is paused"); }
+        if Self::is_paused_internal(env) {
+            panic!("Contract is paused");
+        }
     }
 
     fn next_contract_id(env: &Env) -> u32 {
-        env.storage().persistent().get(&DataKey::NextContractId).unwrap_or(0)
+        env.storage()
+            .persistent()
+            .get(&DataKey::NextContractId)
+            .unwrap_or(0)
     }
 
     fn load_contract(env: &Env, contract_id: u32) -> EscrowContractData {
-        env.storage().persistent().get(&DataKey::Contract(contract_id)).unwrap_or_else(|| panic!("Contract not found"))
+        env.storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| panic!("Contract not found"))
     }
 
     fn save_contract(env: &Env, contract_id: u32, contract: &EscrowContractData) {
-        env.storage().persistent().set(&DataKey::Contract(contract_id), contract);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), contract);
     }
 
     // Indexing helpers
     fn add_to_participant_index(env: &Env, participant: &Address, contract_id: u32) {
         let key = DataKey::ParticipantContracts(participant.clone());
-        let mut contracts: Vec<u32> = env.storage().persistent().get(&key).unwrap_or(Vec::new(env));
+        let mut contracts: Vec<u32> = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(Vec::new(env));
         contracts.push_back(contract_id);
         env.storage().persistent().set(&key, &contracts);
     }
 
-    fn update_status_index(env: &Env, contract_id: u32, old_status: Option<ContractStatus>, new_status: ContractStatus) {
+    fn update_status_index(
+        env: &Env,
+        contract_id: u32,
+        old_status: Option<ContractStatus>,
+        new_status: ContractStatus,
+    ) {
         if let Some(old) = old_status {
             let old_key = DataKey::StatusContracts(old as u32);
-            let mut old_list: Vec<u32> = env.storage().persistent().get(&old_key).unwrap_or(Vec::new(env));
+            let mut old_list: Vec<u32> = env
+                .storage()
+                .persistent()
+                .get(&old_key)
+                .unwrap_or(Vec::new(env));
             if let Some(idx) = old_list.iter().position(|id| id == contract_id) {
                 old_list.remove(idx as u32);
                 env.storage().persistent().set(&old_key, &old_list);
@@ -387,7 +490,11 @@ impl Escrow {
         }
 
         let new_key = DataKey::StatusContracts(new_status as u32);
-        let mut new_list: Vec<u32> = env.storage().persistent().get(&new_key).unwrap_or(Vec::new(env));
+        let mut new_list: Vec<u32> = env
+            .storage()
+            .persistent()
+            .get(&new_key)
+            .unwrap_or(Vec::new(env));
         new_list.push_back(contract_id);
         env.storage().persistent().set(&new_key, &new_list);
     }

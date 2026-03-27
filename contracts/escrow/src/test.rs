@@ -1,10 +1,6 @@
 #![cfg(test)]
 
-use soroban_sdk::{
-    symbol_short,
-    testutils::Address as _,
-    vec, Address, Env,
-};
+use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
 
 use crate::{Escrow, EscrowClient, ReleaseAuthorization};
 
@@ -552,8 +548,14 @@ fn test_indexing_client_freelancer() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 1000_i128];
 
-    let id1 = client.create_contract(&client_addr, &freelancer_addr, &None::<Address>, &milestones, &ReleaseAuthorization::ClientOnly);
-    
+    let id1 = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None::<Address>,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
+
     let client_contracts = client.get_contracts_by_participant(&client_addr);
     assert_eq!(client_contracts.len(), 1);
     assert_eq!(client_contracts.get(0).unwrap(), id1);
@@ -575,14 +577,20 @@ fn test_indexing_status() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 1000_i128];
 
-    let id1 = client.create_contract(&client_addr, &freelancer_addr, &None::<Address>, &milestones, &ReleaseAuthorization::ClientOnly);
-    
+    let id1 = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None::<Address>,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
+
     let created_contracts = client.get_contracts_by_status(&crate::ContractStatus::Created);
     assert_eq!(created_contracts.len(), 1);
     assert_eq!(created_contracts.get(0).unwrap(), id1);
 
     client.deposit_funds(&id1, &client_addr, &1000_i128);
-    
+
     let created_contracts_after = client.get_contracts_by_status(&crate::ContractStatus::Created);
     assert_eq!(created_contracts_after.len(), 0);
 
