@@ -445,4 +445,554 @@ fn require_contract_status(contract: &EscrowContract, expected_status: ContractS
 }
 
 #[cfg(test)]
-mod test;
+mod tests {
+    use super::*;
+    use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
+
+    // ============================================================================
+    // FUNDING ACCOUNT INVARIANT TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_funding_invariants_valid_state() {
+        let funding = FundingAccount {
+            total_funded: 1000,
+            total_released: 400,
+            total_available: 600,
+        };
+
+        // Should not panic
+        Escrow::check_funding_invariants(funding);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_available != total_funded - total_released")]
+    fn test_funding_invariants_invalid_available() {
+        let funding = FundingAccount {
+            total_funded: 1000,
+            total_released: 400,
+            total_available: 500, // Should be 600
+        };
+
+        Escrow::check_funding_invariants(funding);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_released > total_funded")]
+    fn test_funding_invariants_over_release() {
+        let funding = FundingAccount {
+            total_funded: 1000,
+            total_released: 1500,
+            total_available: -500,
+        };
+
+        Escrow::check_funding_invariants(funding);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_released > total_funded")]
+    fn test_funding_invariants_negative_funded() {
+        let funding = FundingAccount {
+            total_funded: -100,
+            total_released: 0,
+            total_available: -100,
+        };
+
+        Escrow::check_funding_invariants(funding);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_released < 0")]
+    fn test_funding_invariants_negative_released() {
+        let funding = FundingAccount {
+            total_funded: 1000,
+            total_released: -100,
+            total_available: 1100,
+        };
+
+        Escrow::check_funding_invariants(funding);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_available != total_funded - total_released")]
+    fn test_funding_invariants_negative_available() {
+        let funding = FundingAccount {
+            total_funded: 1000,
+            total_released: 400,
+            total_available: -100,
+        };
+
+        Escrow::check_funding_invariants(funding);
+    }
+
+    #[test]
+    fn test_funding_invariants_zero_state() {
+        let funding = FundingAccount {
+            total_funded: 0,
+            total_released: 0,
+            total_available: 0,
+        };
+
+        // Should not panic
+        Escrow::check_funding_invariants(funding);
+    }
+
+    #[test]
+    fn test_funding_invariants_fully_released() {
+        let funding = FundingAccount {
+            total_funded: 1000,
+            total_released: 1000,
+            total_available: 0,
+        };
+
+        // Should not panic
+        Escrow::check_funding_invariants(funding);
+    }
+
+    // ============================================================================
+    // MILESTONE ACCOUNTING INVARIANT TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_milestone_invariants_no_releases() {
+        let env = Env::default();
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: 100,
+                released: false,
+            },
+            Milestone {
+                amount: 200,
+                released: false,
+            },
+        ];
+
+        // Should not panic
+        Escrow::check_milestone_invariants(milestones, 0);
+    }
+
+    #[test]
+    fn test_milestone_invariants_partial_releases() {
+        let env = Env::default();
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: 100,
+                released: true,
+            },
+            Milestone {
+                amount: 200,
+                released: false,
+            },
+            Milestone {
+                amount: 300,
+                released: true,
+            },
+        ];
+
+        // 100 + 300 = 400
+        Escrow::check_milestone_invariants(milestones, 400);
+    }
+
+    #[test]
+    #[should_panic(expected = "sum of released milestones != total_released")]
+    fn test_milestone_invariants_mismatch_released_sum() {
+        let env = Env::default();
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: 100,
+                released: true,
+            },
+            Milestone {
+                amount: 200,
+                released: true,
+            },
+        ];
+
+        // Sum is 300, but we claim 250
+        Escrow::check_milestone_invariants(milestones, 250);
+    }
+
+    #[test]
+    #[should_panic(expected = "milestone amount must be positive")]
+    fn test_milestone_invariants_zero_amount() {
+        let env = Env::default();
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: 0,
+                released: false,
+            },
+        ];
+
+        Escrow::check_milestone_invariants(milestones, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "milestone amount must be positive")]
+    fn test_milestone_invariants_negative_amount() {
+        let env = Env::default();
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: -100,
+                released: false,
+            },
+        ];
+
+        Escrow::check_milestone_invariants(milestones, 0);
+    }
+
+    #[test]
+    fn test_milestone_invariants_all_released() {
+        let env = Env::default();
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: 100,
+                released: true,
+            },
+            Milestone {
+                amount: 200,
+                released: true,
+            },
+            Milestone {
+                amount: 300,
+                released: true,
+            },
+        ];
+
+        // All released: 100 + 200 + 300 = 600
+        Escrow::check_milestone_invariants(milestones, 600);
+    }
+
+    // ============================================================================
+    // CONTRACT STATE INVARIANT TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_contract_invariants_valid_state() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: 500,
+                released: false,
+            },
+            Milestone {
+                amount: 500,
+                released: false,
+            },
+        ];
+
+        let state = EscrowState {
+            client,
+            freelancer,
+            status: ContractStatus::Created,
+            milestones,
+            funding: FundingAccount {
+                total_funded: 0,
+                total_released: 0,
+                total_available: 0,
+            },
+        };
+
+        // Should not panic
+        Escrow::check_contract_invariants(state);
+    }
+
+    #[test]
+    fn test_contract_invariants_with_deposits() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: 500,
+                released: false,
+            },
+            Milestone {
+                amount: 500,
+                released: false,
+            },
+        ];
+
+        let state = EscrowState {
+            client,
+            freelancer,
+            status: ContractStatus::Funded,
+            milestones,
+            funding: FundingAccount {
+                total_funded: 1000,
+                total_released: 0,
+                total_available: 1000,
+            },
+        };
+
+        // Should not panic
+        Escrow::check_contract_invariants(state);
+    }
+
+    #[test]
+    fn test_contract_invariants_with_partial_releases() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: 500,
+                released: true,
+            },
+            Milestone {
+                amount: 500,
+                released: false,
+            },
+        ];
+
+        let state = EscrowState {
+            client,
+            freelancer,
+            status: ContractStatus::Funded,
+            milestones,
+            funding: FundingAccount {
+                total_funded: 1000,
+                total_released: 500,
+                total_available: 500,
+            },
+        };
+
+        // Should not panic
+        Escrow::check_contract_invariants(state);
+    }
+
+    #[test]
+    #[should_panic(expected = "total_contract_value < total_funded")]
+    fn test_contract_invariants_over_funded() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: 500,
+                released: false,
+            },
+            Milestone {
+                amount: 500,
+                released: false,
+            },
+        ];
+
+        let state = EscrowState {
+            client,
+            freelancer,
+            status: ContractStatus::Funded,
+            milestones,
+            funding: FundingAccount {
+                total_funded: 2000, // More than total contract value (1000)
+                total_released: 0,
+                total_available: 2000,
+            },
+        };
+
+        Escrow::check_contract_invariants(state);
+    }
+
+    #[test]
+    fn test_contract_invariants_fully_released() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+
+        let milestones = vec![
+            &env,
+            Milestone {
+                amount: 500,
+                released: true,
+            },
+            Milestone {
+                amount: 500,
+                released: true,
+            },
+        ];
+
+        let state = EscrowState {
+            client,
+            freelancer,
+            status: ContractStatus::Completed,
+            milestones,
+            funding: FundingAccount {
+                total_funded: 1000,
+                total_released: 1000,
+                total_available: 0,
+            },
+        };
+
+        // Should not panic
+        Escrow::check_contract_invariants(state);
+    }
+
+    // ============================================================================
+    // CONTRACT CREATION TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_create_contract_valid() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
+
+        let id = Escrow::create_contract(env.clone(), client, freelancer, milestones);
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    #[should_panic(expected = "Must have at least one milestone")]
+    fn test_create_contract_no_milestones() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let milestones = vec![&env];
+
+        Escrow::create_contract(env.clone(), client, freelancer, milestones);
+    }
+
+    #[test]
+    #[should_panic(expected = "Milestone amounts must be positive")]
+    fn test_create_contract_zero_milestone() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let milestones = vec![&env, 100_i128, 0_i128, 200_i128];
+
+        Escrow::create_contract(env.clone(), client, freelancer, milestones);
+    }
+
+    #[test]
+    #[should_panic(expected = "Milestone amounts must be positive")]
+    fn test_create_contract_negative_milestone() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let milestones = vec![&env, 100_i128, -50_i128, 200_i128];
+
+        Escrow::create_contract(env.clone(), client, freelancer, milestones);
+    }
+
+    // ============================================================================
+    // DEPOSIT FUNDS TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_deposit_funds_valid() {
+        let env = Env::default();
+        let result = Escrow::deposit_funds(env.clone(), 1, 1_000_0000000);
+        assert!(result);
+    }
+
+    #[test]
+    #[should_panic(expected = "Deposit amount must be positive")]
+    fn test_deposit_funds_zero_amount() {
+        let env = Env::default();
+        Escrow::deposit_funds(env.clone(), 1, 0);
+    }
+
+    #[test]
+    #[should_panic(expected = "Deposit amount must be positive")]
+    fn test_deposit_funds_negative_amount() {
+        let env = Env::default();
+        Escrow::deposit_funds(env.clone(), 1, -1_000_0000000);
+    }
+
+    // ============================================================================
+    // EDGE CASE AND OVERFLOW TESTS
+    // ============================================================================
+
+    #[test]
+    fn test_large_milestone_amounts() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let milestones = vec![&env, i128::MAX / 3, i128::MAX / 3, i128::MAX / 3];
+
+        let id = Escrow::create_contract(env.clone(), client, freelancer, milestones);
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    fn test_single_milestone_contract() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let milestones = vec![&env, 1000_i128];
+
+        let id = Escrow::create_contract(env.clone(), client, freelancer, milestones);
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    fn test_many_milestones_contract() {
+        let env = Env::default();
+        let client = Address::generate(&env);
+        let freelancer = Address::generate(&env);
+        let mut milestones = vec![&env];
+
+        for i in 1..=100 {
+            milestones.push_back(i as i128 * 100);
+        }
+
+        let id = Escrow::create_contract(env.clone(), client, freelancer, milestones);
+        assert_eq!(id, 1);
+    }
+
+    #[test]
+    fn test_funding_invariants_boundary_values() {
+        // Test with maximum safe values that satisfy the invariant
+        let total_funded = 1_000_000_000_000_000_000_i128;
+        let total_released = 500_000_000_000_000_000_i128;
+        let total_available = total_funded - total_released;
+
+        let funding = FundingAccount {
+            total_funded,
+            total_released,
+            total_available,
+        };
+
+        Escrow::check_funding_invariants(funding);
+    }
+
+    // ============================================================================
+    // ORIGINAL TESTS (PRESERVED)
+    // ============================================================================
+
+    #[test]
+    fn test_hello() {
+        let env = Env::default();
+        let contract_id = env.register(Escrow, ());
+        let client = EscrowClient::new(&env, &contract_id);
+
+        let result = client.hello(&symbol_short!("World"));
+        assert_eq!(result, symbol_short!("World"));
+    }
+
+    #[test]
+    fn test_release_milestone() {
+        let env = Env::default();
+        let contract_id = env.register(Escrow, ());
+        let client = EscrowClient::new(&env, &contract_id);
+
+        let result = client.release_milestone(&1, &0);
+        assert!(result);
+    }
+}
