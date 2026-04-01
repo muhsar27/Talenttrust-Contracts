@@ -4,26 +4,8 @@ Soroban smart contracts for the TalentTrust freelancer escrow protocol on Stella
 
 ## Repository Scope
 
-- `contracts/escrow`: milestone escrow contract with persisted lifecycle state, participant metadata, governed validation parameters, reputation issuance, and pause controls
-- `docs/escrow`: reviewer-focused escrow design, storage notes, and threat assumptions
-
-## Escrow State Persistence
-
-The escrow contract now persists the full payment lifecycle instead of relying on placeholder behavior:
-
-- contract creation requires client authorization and validates immutable milestone inputs
-- each escrow record stores the client, freelancer, milestone definitions, funded and released balances, milestone counters, lifecycle status, and timestamps
-- deposits accumulate toward the total amount while rejecting overfunding
-- milestone releases are one-way state transitions and cannot be replayed
-- completed contracts mint a pending reputation credit for the recorded freelancer, and that credit is consumed exactly once when a rating is issued
-- protocol governance parameters and pause or emergency flags are persisted separately from escrow records so operational controls survive across calls
-
-Default protocol parameters:
-
-- `min_milestone_amount = 1`
-- `max_milestones = 16`
-- `min_reputation_rating = 1`
-- `max_reputation_rating = 5`
+- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
+- **Escrow fee model**: Configurable protocol fee per release with accounting/withdrawal paths (`protocol_fee_bps`, `protocol_fee_account`).
 
 Reviewer-oriented notes live in [docs/escrow/README.md](docs/escrow/README.md), with storage-key details in [docs/escrow/state-persistence.md](docs/escrow/state-persistence.md) and threat analysis in [docs/escrow/security.md](docs/escrow/security.md).
 
@@ -38,16 +20,39 @@ The escrow implementation follows a fail-closed state machine:
 - governance changes use a one-time initialization plus a two-step admin transfer
 - pause and emergency controls block all state-changing escrow operations while active
 
-## Local Verification
+# Run tests (includes 95%+ coverage negative path testing for escrow)
+cargo test
 
-```bash
-cargo build
+# Run escrow performance/gas baseline tests only
+cargo test test::performance
+
+# Check formatting
 cargo fmt --all -- --check
 cargo test -p escrow
 cargo test test::performance -p escrow
 ```
 
-## Development
+## Escrow Emergency Controls
+
+The escrow contract now supports critical-incident response with admin-managed controls:
+
+- `initialize(admin)` (one-time setup)
+- `pause()` and `unpause()`
+- `activate_emergency_pause()` and `resolve_emergency()`
+- `is_paused()` and `is_emergency()`
+
+When paused, mutating escrow operations are blocked.
+
+## Contributing
+
+1. Fork the repo and create a branch from `main`.
+2. Make changes; keep tests and formatting passing:
+   - `cargo fmt --all`
+   - `cargo test`
+   - `cargo build`
+3. Open a pull request. CI runs `cargo fmt --all -- --check`, `cargo build`, and `cargo test` on push/PR to `main`.
+
+## Contract status transition guardrails
 
 Prerequisites:
 
@@ -56,6 +61,13 @@ Prerequisites:
 - optional Stellar CLI for deployment workflows
 
 Common commands:
+
+## Escrow closure finalization
+
+- `finalize_contract` records immutable close metadata (timestamp, finalizer, summary)
+- Finalization allowed only from `Completed` or `Disputed` status
+- Finalization can only be executed by contract parties (client/freelancer/arbiter)
+- Once finalized, the contract summary and record are immutable
 
 ## CI/CD
 
@@ -67,15 +79,14 @@ On every push and pull request to `main`, GitHub Actions:
 
 Ensure these pass locally before pushing.
 
-## Upgradeable Storage Planning
+## Escrow Performance and Security
 
-- Versioned storage metadata and key namespaces are implemented in `contracts/escrow/src/lib.rs`.
-- Dedicated storage planning tests are in:
-  - `contracts/escrow/src/test/storage.rs`
+- Performance/gas baseline tests for key flows are in `contracts/escrow/src/test/performance.rs`.
+- Functional and failure-path coverage is split by module:
   - `contracts/escrow/src/test/flows.rs`
   - `contracts/escrow/src/test/security.rs`
-- Contract-specific documentation:
-  - `docs/escrow/upgradeable-storage.md`
+- Contract-specific reviewer docs:
+  - `docs/escrow/performance-baselines.md`
   - `docs/escrow/security.md`
 
 ## License
