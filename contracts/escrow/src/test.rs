@@ -39,6 +39,7 @@ fn test_create_contract() {
 #[test]
 fn test_create_contract_with_arbiter() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -63,6 +64,7 @@ fn test_create_contract_with_arbiter() {
 #[should_panic(expected = "At least one milestone required")]
 fn test_create_contract_no_milestones() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -127,6 +129,7 @@ fn test_create_contract_negative_amount() {
 #[test]
 fn test_deposit_funds() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -157,6 +160,7 @@ fn test_deposit_funds() {
 #[should_panic(expected = "Deposit amount must equal total milestone amounts")]
 fn test_deposit_funds_wrong_amount() {
     let env = Env::default();
+    env.mock_all_auths();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
 
@@ -246,6 +250,7 @@ fn test_approve_milestone_release_unauthorized() {
     let env = Env::default();
     let contract_id = env.register(Escrow, ());
     let client = EscrowClient::new(&env, &contract_id);
+    env.mock_all_auths();
 
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
@@ -425,6 +430,7 @@ fn test_release_milestone_already_released() {
     // Use 2 milestones so releasing the first one doesn't set status to Completed
     let milestones = vec![&env, 1000_0000000_i128, 2000_0000000_i128];
 
+    env.mock_all_auths();
     // Create contract
     client.create_contract(
         &client_addr,
@@ -437,14 +443,14 @@ fn test_release_milestone_already_released() {
     );
 
     env.mock_all_auths();
-    client.deposit_funds(&1, &client_addr, &3000_0000000);
-    client.approve_milestone_release(&1, &client_addr, &0);
+    client.deposit_funds(&0, &client_addr, &3000_0000000);
+    client.approve_milestone_release(&0, &client_addr, &0);
 
-    let result = client.release_milestone(&1, &client_addr, &0);
+    let result = client.release_milestone(&0, &client_addr, &0);
     assert!(result);
 
     // Try to release again — should panic with "Milestone already released"
-    client.release_milestone(&1, &client_addr, &0);
+    client.release_milestone(&0, &client_addr, &0);
 }
 
 #[test]
@@ -458,6 +464,7 @@ fn test_release_milestone_multi_sig() {
     let arbiter_addr = Address::generate(&env);
     let milestones = vec![&env, 1000_0000000_i128];
 
+    env.mock_all_auths();
     // Create contract
     client.create_contract(
         &client_addr,
@@ -470,10 +477,10 @@ fn test_release_milestone_multi_sig() {
     );
 
     env.mock_all_auths();
-    client.deposit_funds(&1, &client_addr, &1000_0000000);
-    client.approve_milestone_release(&1, &client_addr, &0);
+    client.deposit_funds(&0, &client_addr, &1000_0000000);
+    client.approve_milestone_release(&0, &client_addr, &0);
 
-    let result = client.release_milestone(&1, &client_addr, &0);
+    let result = client.release_milestone(&0, &client_addr, &0);
     assert!(result);
 }
 
@@ -487,6 +494,7 @@ fn test_contract_completion_all_milestones_released() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 1000_0000000_i128, 2000_0000000_i128];
 
+    env.mock_all_auths();
     // Create contract
     client.create_contract(
         &client_addr,
@@ -499,13 +507,13 @@ fn test_contract_completion_all_milestones_released() {
     );
 
     env.mock_all_auths();
-    client.deposit_funds(&1, &client_addr, &3000_0000000);
+    client.deposit_funds(&0, &client_addr, &3000_0000000);
 
-    client.approve_milestone_release(&1, &client_addr, &0);
-    client.release_milestone(&1, &client_addr, &0);
+    client.approve_milestone_release(&0, &client_addr, &0);
+    client.release_milestone(&0, &client_addr, &0);
 
-    client.approve_milestone_release(&1, &client_addr, &1);
-    client.release_milestone(&1, &client_addr, &1);
+    client.approve_milestone_release(&0, &client_addr, &1);
+    client.release_milestone(&0, &client_addr, &1);
 
     // All milestones should be released and contract completed
     // Note: In a real implementation, we would check the contract status
