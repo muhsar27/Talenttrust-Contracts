@@ -123,9 +123,6 @@ pub struct MainnetReadinessInfo {
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
-    Admin,
-    Paused,
-    EmergencyPaused,
     NextContractId,
     Contract(u32),
     Reputation(Address),
