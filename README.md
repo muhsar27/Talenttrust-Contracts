@@ -1,136 +1,47 @@
 # TalentTrust Contracts
 
-Soroban smart contracts for the TalentTrust decentralized freelancer escrow protocol on the Stellar network.
+Soroban smart contracts for the TalentTrust freelancer escrow protocol on Stellar.
 
-## What's in this repo
+## Repository Scope
 
-- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments, reputation credential issuance, and emergency pause controls.
-- **Escrow docs** (`docs/escrow`): Escrow operations, security notes, and pause/emergency threat model.
+- **Escrow contract** (`contracts/escrow`): Holds funds in escrow, supports milestone-based payments and reputation credential issuance.
+- **Escrow fee model**: Configurable protocol fee per release with accounting/withdrawal paths (`protocol_fee_bps`, `protocol_fee_account`).
 
-## Security model
+Reviewer-oriented notes live in [docs/escrow/README.md](docs/escrow/README.md), with storage-key details in [docs/escrow/state-persistence.md](docs/escrow/state-persistence.md) and threat analysis in [docs/escrow/security.md](docs/escrow/security.md).
 
-The escrow contract enforces a minimal on-chain state machine with comprehensive security controls:
+## Security Model
 
-- Contract creation requires client authorization and validates immutable milestone inputs.
-- Contract creation enforces minimum and maximum size/funding limits to prevent unbounded state and massive logic errors.
-- Funding is accepted exactly once and must match the total milestone amount.
-- Milestones can be released once each and only by the recorded client.
-- Reputation entries are gated behind completed-contract credits and are treated as informational data.
-- Protocol-wide validation parameters (like maximum milestone counts) can be guarded by a governance admin and updated through audited state transitions.
+The escrow implementation follows a fail-closed state machine:
 
-Comprehensive security documentation:
-- [Threat Model](/docs/escrow/threat-model.md) - Complete threat analysis, attack vectors, and mitigations
-- [Security Notes](/docs/escrow/security.md) - Pause/emergency controls and operational security
-- [Contract Documentation](/docs/escrow/README.md) - Reviewer-focused contract notes
+- contract creation requires client authorization and rejects invalid participant or milestone metadata before persisting state
+- deposits cannot exceed the required escrow total
+- releases require the recorded client, a valid unreleased milestone, and enough funded balance to cover the payment
+- reputation is gated behind contract completion and is issued once per contract
+- governance changes use a one-time initialization plus a two-step admin transfer
+- pause and emergency controls block all state-changing escrow operations while active
 
-## Threat Model
-
-The escrow contract has been analyzed for security threats across all functionality. Key security features include:
-
-- Multiple authorization layers preventing unauthorized fund access
-- State machine enforcement preventing invalid transitions
-- Input validation on all user-supplied data
-- Emergency pause controls for incident response
-- Two-step governance admin transfer
-- Protocol parameter validation
-
-See [docs/escrow/threat-model.md](/docs/escrow/threat-model.md) for the complete threat model including:
-- 15 identified threat scenarios with mitigations
-- Attack surface analysis
-- Security assumptions and residual risks
-- Recommended hardening steps
-- Incident response procedures
-- Security audit checklist
-
-## Protocol governance
-
-The escrow contract supports guarded protocol parameter updates for live validation logic:
-
-- A one-time governance initialization assigns the first protocol admin via `initialize_governance`.
-- The admin can update protocol parameters such as minimum milestone amount, maximum milestones per contract, and permitted reputation rating bounds via `update_protocol_parameters`.
-- Admin transfer is two-step: current admin proposes via `propose_governance_admin`, pending admin accepts via `accept_governance_admin`.
-- Before governance is initialized, the contract uses safe built-in defaults so existing flows remain available.
-- Governance operations are independent of pause controls and can be executed even when the contract is paused.
-
-Current defaults:
-
-- `min_milestone_amount = 1`
-- `max_milestones = 16`
-- `min_reputation_rating = 1`
-- `max_reputation_rating = 5`
-
-Governance functions:
-- `initialize_governance(admin)` - One-time initialization of governance admin
-- `update_protocol_parameters(min_milestone, max_milestones, min_rating, max_rating)` - Update validation parameters
-- `propose_governance_admin(new_admin)` - Propose admin transfer
-- `accept_governance_admin()` - Accept admin transfer (called by pending admin)
-- `get_governance_admin()` - Query current governance admin
-- `get_pending_governance_admin()` - Query pending admin transfer
-- `get_protocol_parameters()` - Query current parameters
-
-## Prerequisites
-
-- [Rust](https://rustup.rs/) (stable, 1.75+)
-- `rustfmt`: `rustup component add rustfmt`
-- Optional: [Stellar CLI](https://developers.stellar.org/docs/tools/stellar-cli) for deployment
-
-## Setup
-
-```bash
-# Clone (or you're already in the repo)
-git clone <your-repo-url>
-cd talenttrust-contracts
-
-# Build
-cargo build
-
-# Run tests
+# Run tests (includes 95%+ coverage negative path testing for escrow)
 cargo test
 
-# Run access-control focused tests
-cargo test access_control
-
-# Run upgradeable storage planning tests only
-cargo test test::storage
-
+# Run escrow performance/gas baseline tests only
+cargo test test::performance
 
 # Check formatting
 cargo fmt --all -- --check
-
-# Format code
-cargo fmt --all
+cargo test -p escrow
+cargo test test::performance -p escrow
 ```
 
-## Escrow contract — acceptance handshake
+## Escrow Emergency Controls
 
-Before a client can fund an escrow contract, the assigned freelancer must explicitly accept the terms. This two-party handshake ensures no funds are committed without mutual agreement.
+The escrow contract now supports critical-incident response with admin-managed controls:
 
-### State machine
+- `initialize(admin)` (one-time setup)
+- `pause()` and `unpause()`
+- `activate_emergency_pause()` and `resolve_emergency()`
+- `is_paused()` and `is_emergency()`
 
-```
-Created ──► Accepted ──► Funded ──► Completed
-                                └──► Disputed
-```
-
-| Status      | Meaning                                                       |
-| ----------- | ------------------------------------------------------------- |
-| `Created`   | Contract created by the client; awaiting freelancer response. |
-| `Accepted`  | Freelancer has signed off; client may now deposit funds.      |
-| `Funded`    | Funds are held in escrow; milestones may be released.         |
-| `Completed` | All milestones released; engagement concluded.                |
-| `Disputed`  | Under dispute resolution.                                     |
-
-### Key functions
-
-| Function            | Caller     | Requires status | Resulting status |
-| ------------------- | ---------- | --------------- | ---------------- |
-| `create_contract`   | client     | —               | `Created`        |
-| `accept_contract`   | freelancer | `Created`       | `Accepted`       |
-| `deposit_funds`     | client     | `Accepted`      | `Funded`         |
-| `release_milestone` | client     | `Funded`        | `Funded`         |
-| `get_status`        | anyone     | —               | —                |
-
-See [`docs/escrow/README.md`](docs/escrow/README.md) for the full contract reference.
+When paused, mutating escrow operations are blocked.
 
 ## Contributing
 
@@ -143,14 +54,20 @@ See [`docs/escrow/README.md`](docs/escrow/README.md) for the full contract refer
 
 ## Contract status transition guardrails
 
-Escrow contract status transitions are enforced using a guarded matrix to prevent invalid state changes. Supported transitions:
+Prerequisites:
 
-- `Created` -> `Funded`
-- `Funded` -> `Completed`
-- `Funded` -> `Disputed`
-- `Disputed` -> `Completed`
+- Rust 1.75+
+- `rustfmt`
+- optional Stellar CLI for deployment workflows
 
-Invalid transitions cause a contract panic during execution.
+Common commands:
+
+## Escrow closure finalization
+
+- `finalize_contract` records immutable close metadata (timestamp, finalizer, summary)
+- Finalization allowed only from `Completed` or `Disputed` status
+- Finalization can only be executed by contract parties (client/freelancer/arbiter)
+- Once finalized, the contract summary and record are immutable
 
 ## CI/CD
 
@@ -162,15 +79,14 @@ On every push and pull request to `main`, GitHub Actions:
 
 Ensure these pass locally before pushing.
 
-## Upgradeable Storage Planning
+## Escrow Performance and Security
 
-- Versioned storage metadata and key namespaces are implemented in `contracts/escrow/src/lib.rs`.
-- Dedicated storage planning tests are in:
-  - `contracts/escrow/src/test/storage.rs`
+- Performance/gas baseline tests for key flows are in `contracts/escrow/src/test/performance.rs`.
+- Functional and failure-path coverage is split by module:
   - `contracts/escrow/src/test/flows.rs`
   - `contracts/escrow/src/test/security.rs`
-- Contract-specific documentation:
-  - `docs/escrow/upgradeable-storage.md`
+- Contract-specific reviewer docs:
+  - `docs/escrow/performance-baselines.md`
   - `docs/escrow/security.md`
 
 ## License

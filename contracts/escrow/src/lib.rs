@@ -58,25 +58,53 @@ pub struct EscrowContractData {
     pub funded_amount: i128,
     pub released_amount: i128,
     pub status: ContractStatus,
+    /// Total amount deposited by the client so far.
+    pub deposited_amount: i128,
 }
 
-/// Reputation state derived from completed escrow contracts.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ReputationRecord {
-    pub completed_contracts: u32,
-    pub total_rating: i128,
-    pub last_rating: i128,
-}
+// ---------------------------------------------------------------------------
+// Release-readiness checklist
+// ---------------------------------------------------------------------------
 
-/// Governed protocol parameters used by the escrow validation logic.
+/// Tracks whether each deployment, verification, and post-deploy monitoring
+/// gate has been satisfied for a specific escrow contract.
+///
+/// Items are **automatically** updated by contract operations -- no external
+/// caller may set them directly, preventing unauthorized state manipulation.
+///
+/// # Phases
+///
+/// **Deployment**
+/// - `contract_created` -- set when `create_contract` succeeds.
+/// - `funds_deposited`  -- set when `deposit_funds` succeeds with amount > 0.
+///
+/// **Verification**
+/// - `parties_authenticated` -- set at contract creation (both addresses recorded).
+/// - `milestones_defined`    -- set at contract creation when >= 1 milestone exists.
+///
+/// **Post-Deploy Monitoring**
+/// - `all_milestones_released` -- set when the final milestone is released.
+/// - `reputation_issued`       -- set when `issue_reputation` is called.
 #[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct ProtocolParameters {
-    pub min_milestone_amount: i128,
-    pub max_milestones: u32,
-    pub min_reputation_rating: i128,
-    pub max_reputation_rating: i128,
+#[derive(Clone, Debug)]
+pub struct ReleaseChecklist {
+    // -- Deployment --
+    /// Contract has been successfully created and persisted.
+    pub contract_created: bool,
+    /// Client has deposited a positive amount into escrow.
+    pub funds_deposited: bool,
+
+    // -- Verification --
+    /// Both client and freelancer addresses have been recorded.
+    pub parties_authenticated: bool,
+    /// At least one milestone amount has been defined.
+    pub milestones_defined: bool,
+
+    // -- Post-Deploy Monitoring --
+    /// Every milestone in the agreement has been released.
+    pub all_milestones_released: bool,
+    /// A reputation credential has been issued for the freelancer.
+    pub reputation_issued: bool,
 }
 
 /// On-chain summary for mainnet deployment review and monitoring integration.
@@ -274,10 +302,22 @@ impl Escrow {
             client,
             freelancer,
             milestones,
-            total_amount,
-            funded_amount: 0,
-            released_amount: 0,
             status: ContractStatus::Created,
+            deposited_amount: 0,
+        };
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(id), &data);
+
+        // Initialise checklist -- deployment + verification items are satisfied
+        // by the act of calling this function successfully.
+        let checklist = ReleaseChecklist {
+            contract_created: true,
+            funds_deposited: false,
+            parties_authenticated: true,
+            milestones_defined: true,
+            all_milestones_released: false,
+            reputation_issued: false,
         };
 
         env.storage()
@@ -292,7 +332,7 @@ impl Escrow {
             (contract_id, total_amount),
         );
 
-        contract_id
+        id
     }
 
     /// Deposits the full escrow amount for a contract.
@@ -362,6 +402,8 @@ impl Escrow {
         if next_released_amount > contract.funded_amount {
             panic!("release exceeds funded amount");
         }
+        milestone.released = true;
+        data.milestones.set(milestone_id, milestone);
 
         milestone.released = true;
         contract.milestones.set(milestone_id, milestone);
