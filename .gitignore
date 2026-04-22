@@ -1,7 +1,9 @@
 /target/
 **/*.rs.bk
-# Soroban test snapshot artifacts (auto-generated, not source)
-contracts/escrow/test_snapshots/
+# Soroban CLI / local test output (do not commit)
+contracts/**/test_snapshots/
+.cargo/
+
 # Coverage output
 coverage_summary.txt
 lcov.info

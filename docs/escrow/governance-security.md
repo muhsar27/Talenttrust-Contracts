@@ -443,7 +443,7 @@ The separation of governance admin from pause controls enables role separation a
 ## References
 
 - [Threat Model](./threat-model.md) - Complete security threat analysis
-- [Security Notes](./security.md) - Pause and emergency controls
+- [Security Notes](./SECURITY.md) - Pause and emergency controls
 - [Contract Documentation](./README.md) - Operational guidance
 - Main README - Protocol governance overview
 
