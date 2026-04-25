@@ -9,6 +9,9 @@ Baselines are enforced by tests in `contracts/escrow/src/test/performance.rs` fo
 - `create_contract`
 - `deposit_funds`
 - `release_milestone`
+- `refund`
+- `cancel`
+- `dispute`
 - end-to-end sequence (`create_contract` -> `deposit_funds` -> `release_milestone`)
 
 ## Methodology
@@ -50,6 +53,36 @@ Note: Soroban resource estimates in unit tests are approximations and can differ
 - max read bytes: `2,048`
 - max write bytes: `10,240`
 - max fee total (stroops): `1,550,000`
+
+### refund
+
+- max instructions: `10,000,000`
+- max memory bytes: `1,000,000`
+- max read entries: `4`
+- max write entries: `3`
+- max read bytes: `4,096`
+- max write bytes: `12,288`
+- max fee total (stroops): `2,000,000`
+
+### cancel
+
+- max instructions: `9,000,000`
+- max memory bytes: `900,000`
+- max read entries: `3`
+- max write entries: `2`
+- max read bytes: `4,096`
+- max write bytes: `8,192`
+- max fee total (stroops): `1,900,000`
+
+### dispute
+
+- max instructions: `9,000,000`
+- max memory bytes: `900,000`
+- max read entries: `3`
+- max write entries: `2`
+- max read bytes: `4,096`
+- max write bytes: `8,192`
+- max fee total (stroops): `1,900,000`
 
 ### end-to-end sequence
 

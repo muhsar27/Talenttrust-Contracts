@@ -2,6 +2,8 @@
 
 This document maps the escrow contract's persisted storage to the lifecycle invariants reviewers should verify.
 
+For transient keys (pending approvals, pending migrations) and their TTL / expiration policy, see [storage-ttl.md](./storage-ttl.md).
+
 ## Storage Keys
 
 | Key | Value | Purpose |

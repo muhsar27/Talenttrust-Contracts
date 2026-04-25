@@ -286,6 +286,9 @@ This document outlines the threat scenarios, mitigations provided by the contrac
 | **On-Chain** | Unauthorized fund ops | Cryptographic auth | CRITICAL |
 | **On-Chain** | Concurrent mutations | Atomic transactions | MEDIUM |
 | **On-Chain** | Invalid ratings | Rating validation | LOW |
+| **On-Chain** | Unauthorized cancellation | Role gates + state checks | CRITICAL |
+| **On-Chain** | Retroactive cancellation | Terminal state blocks | HIGH |
+| **On-Chain** | Double cancellation | Idempotency flag | MEDIUM |
 | **Off-Chain** | Insufficient funds | Asset amount verification | MEDIUM |
 | **Off-Chain** | Freelancer impersonation | Social verification | MEDIUM |
 
@@ -359,6 +362,22 @@ Off-chain observers can reconstruct the exact timeline and verify no constraints
 
 ## Cancellation Threat Model (v0.2.0)
 
+### Cancellation Security Guarantees
+
+The `cancel_contract` function implements six critical security guarantees:
+
+1. **Role-Based Authorization**: Each contract state has explicit caller requirements
+   - Created: Client or Freelancer
+   - Funded: Client (conditional), Freelancer, or Arbiter
+   - Disputed: Arbiter only
+2. **No Retroactive Cancellation**: Completed contracts cannot be cancelled under any circumstances
+3. **Freelancer Protection**: Client cannot cancel after any milestone has been released
+4. **Idempotency**: Double-cancellation prevented with explicit AlreadyCancelled error
+5. **Event Integrity**: Atomic event emission ensures indexer consistency
+6. **Arbiter Isolation**: Arbiter address cannot overlap with client or freelancer at contract creation
+
+---
+
 ### Threat 7: Unauthorized Cancellation (Severity: CRITICAL)
 
 **Attack:** A malicious actor cancels a contract they are not party to, forcing funds to be returned before work is complete.
@@ -372,22 +391,32 @@ Off-chain observers can reconstruct the exact timeline and verify no constraints
 
 1. **Role-Based Gate (Caller Authorization):**
    - In `Created` state: only client or freelancer can cancel.
-   - In `Funded` state: only client (before releases), freelancer (mutual agreement), or arbiter allowed.
+   - In `Funded` state: 
+     - Client can cancel only if **zero milestones** have been released.
+     - Freelancer can cancel (economic deterrent - funds return to client).
+     - Arbiter can cancel (dispute resolution authority).
    - In `Disputed` state: arbiter-only cancellation.
-   - Any unauthorized caller panics immediately.
+   - Any unauthorized caller panics with `EscrowError::UnauthorizedRole`.
 
 2. **Release Check (Protects Freelancer):**
    - In `Funded` state, client can only cancel if **zero milestones** were released.
    - Prevents client from cancelling after receiving the freelancer's delivered work.
-   - Panics with `"Client cannot cancel after milestones have been released"`.
+   - Panics with `EscrowError::MilestonesAlreadyReleased`.
 
 3. **Status Gate (Prevents Retroactive Cancellation):**
    - `Completed` contracts cannot be cancelled (work is done, funds disbursed).
-   - Already `Cancelled` contracts panicis immediately (no double-cancellation).
+   - Panics with `EscrowError::InvalidStatusTransition`.
+   - Already `Cancelled` contracts panic immediately with `EscrowError::AlreadyCancelled` (no double-cancellation).
 
 4. **Atomic Event Emission:**
    - `contract_cancelled` event is emitted on success for off-chain audit trails.
+   - Event structure: Topics `("contract_cancelled", contract_id)`, Data `(caller, status, timestamp)`.
    - Cancellation is fully atomic; no partial state is possible.
+
+5. **Arbiter Validation:**
+   - Arbiter address cannot equal client or freelancer address at contract creation.
+   - Prevents role confusion and unauthorized cancellation paths.
+   - Panics with `EscrowError::InvalidParticipant` if validation fails.
 
 **Residual Risk:** Client and arbiter collusion can cancel a funded contract even when milestones remain. Both must cooperate, raising the bar significantly.
 
@@ -412,10 +441,18 @@ Off-chain observers can reconstruct the exact timeline and verify no constraints
 1. **Deposit Only When Ready:** Confirm milestones and terms off-chain before funding.
 2. **Nominate an Arbiter:** Always include an arbiter in high-value contracts for third-party cancellation rights.
 3. **Track Release Events:** Once milestones are released, unilateral cancellation is blocked.
+4. **Monitor Contract State:** Watch for cancellation attempts via `contract_cancelled` events.
 
 ### For Freelancers
 1. **Monitor Funded Status:** Watch for unauthorized cancellation via `contract_cancelled` events.
 2. **Use Arbiter for Disputes:** Prefer dispute escalation over cancellation if client withholds payment.
+3. **Complete Work Promptly:** Release milestones quickly to prevent client cancellation.
+4. **Verify Arbiter Identity:** Ensure the arbiter is a trusted third party before contract creation.
+
+### For Arbiters
+1. **Act Impartially:** Cancellation authority should only be used in legitimate dispute scenarios.
+2. **Document Decisions:** Off-chain documentation of cancellation reasons aids in dispute resolution.
+3. **Monitor Events:** Track `contract_cancelled` events for contracts under your supervision.
 
 ---
 
