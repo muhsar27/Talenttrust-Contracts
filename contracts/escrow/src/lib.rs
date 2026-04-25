@@ -12,9 +12,12 @@ pub use ttl::{
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
 };
 
-use types::ContractStatus;
-
 mod types;
+
+use types::ContractStatus;
+pub use crate::types::{
+    CONTRACT_SUMMARY_SCHEMA_VERSION, ContractSummary, MilestoneSummary,
+};
 
 // ─── Bounds constants ─────────────────────────────────────────────────────────
 //
@@ -41,7 +44,6 @@ pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000; // 1 M tokens × 1
 pub const MAINNET_PROTOCOL_VERSION: u32 = 1u32;
 pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000_000i128;
 
-mod types;
 pub use crate::types::{MainnetReadinessInfo, ReadinessChecklist};
 use crate::types::DataKey as ReadinessDataKey;
 
@@ -362,6 +364,81 @@ impl Escrow {
             }
         }
         released
+    }
+
+    /// Returns a stable, single-read summary of an escrow contract for off-chain indexers.
+    ///
+    /// Combines contract roles, lifecycle status, financial totals, and
+    /// per-milestone state into one atomic call so that indexing pipelines
+    /// do not need multiple separate storage reads.
+    ///
+    /// # Fields
+    ///
+    /// | Field | Description |
+    /// |---|---|
+    /// | `schema_version` | Always `CONTRACT_SUMMARY_SCHEMA_VERSION` (`1`); incremented on breaking changes |
+    /// | `client` | Address that funds the contract |
+    /// | `freelancer` | Address that receives milestone payments |
+    /// | `arbiter` | Optional dispute-resolution address (`None` if not set) |
+    /// | `status` | Current lifecycle status (`Created`, `Funded`, `Completed`, `Cancelled`, `Refunded`, `Disputed`) |
+    /// | `reputation_issued` | Whether a reputation score has already been recorded |
+    /// | `total_amount` | Sum of all milestone amounts in stroops |
+    /// | `funded_amount` | Total deposited by the client in stroops |
+    /// | `released_amount` | Total released to the freelancer in stroops |
+    /// | `refundable_balance` | Balance not yet released or refunded, in stroops |
+    /// | `released_milestone_count` | Number of milestones released so far |
+    /// | `milestones` | Per-milestone index, amount, `released`, and `refunded` flags |
+    ///
+    /// # Errors
+    ///
+    /// Panics with `EscrowError::ContractNotFound` if `contract_id` does not exist.
+    ///
+    /// # Backwards compatibility
+    ///
+    /// This method is additive and backwards-compatible with all existing
+    /// contract storage.  If the return layout ever changes in a breaking way
+    /// `CONTRACT_SUMMARY_SCHEMA_VERSION` will be incremented so consumers can
+    /// detect and handle the new format.
+    pub fn get_contract_summary(env: Env, contract_id: u32) -> ContractSummary {
+        // Load the main contract record (panics with ContractNotFound if absent).
+        let record = Self::get_contract(env.clone(), contract_id);
+
+        // Load the ordered milestone list.
+        let raw_milestones = Self::get_milestones(env.clone(), contract_id);
+
+        // Load the current refundable balance (0 if never set).
+        let refundable_balance = Self::get_refundable_balance(env.clone(), contract_id);
+
+        // Build the per-milestone summaries and count released milestones.
+        let mut milestone_summaries: Vec<MilestoneSummary> = Vec::new(&env);
+        let mut released_milestone_count: u32 = 0u32;
+
+        for (idx, m) in raw_milestones.iter().enumerate() {
+            if m.released {
+                released_milestone_count += 1;
+            }
+            milestone_summaries.push_back(MilestoneSummary {
+                index: idx as u32,
+                amount: m.amount,
+                released: m.released,
+                refunded: m.refunded,
+            });
+        }
+
+        ContractSummary {
+            schema_version: CONTRACT_SUMMARY_SCHEMA_VERSION,
+            client: record.client,
+            freelancer: record.freelancer,
+            arbiter: record.arbiter,
+            status: record.status,
+            reputation_issued: record.reputation_issued,
+            total_amount: record.total_amount,
+            funded_amount: record.funded_amount,
+            released_amount: record.released_amount,
+            refundable_balance,
+            released_milestone_count,
+            milestones: milestone_summaries,
+        }
     }
 }
 
