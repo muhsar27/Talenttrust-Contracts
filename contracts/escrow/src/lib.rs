@@ -16,6 +16,28 @@ use types::ContractStatus;
 
 mod types;
 
+// ─── Bounds constants ─────────────────────────────────────────────────────────
+//
+// Policy decision: bounds are HARD-CODED for the initial release rather than
+// governed on-chain. Rationale:
+//   • Governance machinery adds upgrade-path complexity and new attack surface.
+//   • Hard limits give the strongest security guarantee with zero runtime cost.
+//   • A future governance proposal can introduce adjustable parameters if
+//     operational experience shows the defaults need revisiting.
+//
+// MAX_MILESTONES: limits worst-case per-contract storage and loop cost.
+//   10 milestones covers the overwhelming majority of real freelance contracts.
+//
+// MAX_TOTAL_ESCROW_STROOPS: caps the maximum value locked in a single contract
+//   to 1 000 000 tokens (7-decimal stroops) to bound worst-case griefing impact.
+
+/// Maximum number of milestones allowed per contract.
+pub const MAX_MILESTONES: u32 = 10;
+
+/// Hard cap on the total escrow value per contract, in stroops (7 decimal places).
+/// Equals 1 000 000 tokens.
+pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000; // 1 M tokens × 10^7 = 10^13
+
 #[contract]
 pub struct Escrow;
 
@@ -79,6 +101,15 @@ impl Escrow {
         to
     }
 
+    /// Returns the hard-coded bounds enforced by this contract.
+    /// Useful for client-side pre-validation and monitoring dashboards.
+    pub fn get_bounds(_env: Env) -> EscrowBounds {
+        EscrowBounds {
+            max_milestones: MAX_MILESTONES,
+            max_total_escrow_stroops: MAX_TOTAL_ESCROW_STROOPS,
+        }
+    }
+
     pub fn create_contract(
         env: Env,
         client: Address,
@@ -101,6 +132,9 @@ impl Escrow {
 
         if milestones.is_empty() {
             env.panic_with_error(EscrowError::EmptyMilestones);
+        }
+        if milestones.len() > MAX_MILESTONES {
+            env.panic_with_error(EscrowError::TooManyMilestones);
         }
 
         let mut total_amount: i128 = 0;
