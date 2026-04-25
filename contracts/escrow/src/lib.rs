@@ -1,8 +1,8 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Bytes, BytesN, Env,
-    Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, token, Address, Bytes,
+    BytesN, Env, Symbol, Vec,
 };
 
 mod ttl;
@@ -11,10 +11,6 @@ pub use ttl::{
     LEDGERS_PER_DAY, PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS,
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
 };
-
-
-
-
 
 // ─── Bounds constants ─────────────────────────────────────────────────────────
 //
@@ -158,9 +154,13 @@ impl Escrow {
         }
 
         env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage().instance().set(&DataKey::ProtocolFeeBps, &protocol_fee_bps);
+        env.storage()
+            .instance()
+            .set(&DataKey::ProtocolFeeBps, &protocol_fee_bps);
         env.storage().instance().set(&DataKey::Initialized, &true);
-        env.storage().persistent().set(&DataKey::AccumulatedProtocolFees, &0i128);
+        env.storage()
+            .persistent()
+            .set(&DataKey::AccumulatedProtocolFees, &0i128);
 
         true
     }
@@ -273,11 +273,15 @@ impl Escrow {
             released_amount: 0,
         };
 
-        env.storage().persistent().set(&DataKey::Contract(id), &data);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(id), &data);
         env.storage()
             .persistent()
             .set(&DataKey::Milestones(id), &milestone_list);
-        env.storage().persistent().set(&DataKey::ContractCount, &(id + 1));
+        env.storage()
+            .persistent()
+            .set(&DataKey::ContractCount, &(id + 1));
 
         id
     }
@@ -330,26 +334,45 @@ impl Escrow {
 
         // Accrue protocol fees and update released amount
         if let Some(amount) = contract.milestones.get(milestone_index) {
-            let bps: u32 = env.storage().instance().get(&DataKey::ProtocolFeeBps).unwrap_or(0);
+            let bps: u32 = env
+                .storage()
+                .instance()
+                .get(&DataKey::ProtocolFeeBps)
+                .unwrap_or(0);
             let bps_i128 = bps as i128;
-            
+
             let fee = if bps_i128 > 0 {
                 // Ceiling rounding math: (amount * bps + 9999) / 10000
-                amount.checked_mul(bps_i128).expect("multiplication overflow")
-                    .checked_add(9999).expect("addition overflow")
-                    .checked_div(10000).expect("division overflow")
+                amount
+                    .checked_mul(bps_i128)
+                    .expect("multiplication overflow")
+                    .checked_add(9999)
+                    .expect("addition overflow")
+                    .checked_div(10000)
+                    .expect("division overflow")
             } else {
                 0
             };
 
-            let current_fees: i128 = env.storage().persistent().get(&DataKey::AccumulatedProtocolFees).unwrap_or(0i128);
-            env.storage().persistent().set(&DataKey::AccumulatedProtocolFees, &(current_fees.checked_add(fee).unwrap()));
+            let current_fees: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::AccumulatedProtocolFees)
+                .unwrap_or(0i128);
+            env.storage().persistent().set(
+                &DataKey::AccumulatedProtocolFees,
+                &(current_fees.checked_add(fee).unwrap()),
+            );
 
             let net_amount = amount.checked_sub(fee).unwrap();
             contract.released_amount += net_amount;
 
             env.events().publish(
-                (Symbol::new(&env, "ProtocolFeeAccrued"), contract_id, milestone_index),
+                (
+                    Symbol::new(&env, "ProtocolFeeAccrued"),
+                    contract_id,
+                    milestone_index,
+                ),
                 (fee, env.ledger().sequence()),
             );
         }
