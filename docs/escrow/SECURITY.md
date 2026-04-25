@@ -728,3 +728,98 @@ The `cancel_contract` function implements six critical security guarantees:
 4. **Governance Security:** Governance keys are stored securely with multi-sig requirements.
 5. **Timeout Handling:** Off-chain timeout monitoring triggers escalation or auto-resolution.
 6. **Dispute Evidence:** Evidence submission happens off-chain; on-chain stores only resolution.
+
+---
+
+## Milestone-Level Partial Refund Security (PR #213)
+
+### Overview
+
+`refund_milestone` allows the client to return unused escrow funds on a per-milestone basis.
+The function is designed with defence-in-depth to prevent every known class of refund abuse.
+
+### Security Properties
+
+#### 1. No double-refund
+
+Each `Milestone` carries a `refunded: bool` flag that is set atomically when the refund is
+applied.  Any subsequent call that includes the same milestone index panics with
+`EscrowError::MilestoneAlreadyRefunded`.  The flag is stored in persistent contract storage
+and is never reset.
+
+#### 2. No refund-after-release
+
+A milestone that has already been released to the freelancer (`released == true`) cannot be
+refunded.  The check is performed before any state mutation, so the transaction reverts
+cleanly with `EscrowError::MilestoneAlreadyReleased`.
+
+#### 3. Balance cap — refund ≤ available escrow balance
+
+Before any state is mutated the function computes:
+
+```
+available = total_deposited − released_amount − refunded_amount
+```
+
+If `available < sum(requested milestone amounts)` the call panics with
+`EscrowError::InsufficientEscrowBalance`.  This prevents the contract from ever entering a
+state where `refunded_amount > total_deposited − released_amount`.
+
+#### 4. Accounting invariant
+
+The invariant `total_deposited == released_amount + refunded_amount + available_balance` is
+maintained after every operation.  `get_refundable_balance` exposes the available balance so
+off-chain systems can verify it at any time.
+
+#### 5. Duplicate-index guard
+
+A single `refund_milestone` call that lists the same milestone index more than once is
+rejected with `EscrowError::DuplicateMilestoneInRefund` before any state is touched.
+
+#### 6. Atomic all-or-nothing semantics
+
+All validation (bounds check, released check, refunded check, balance check) is performed
+in a read-only pass over the milestone list before any writes occur.  If any check fails the
+entire transaction reverts; no partial refund is ever committed.
+
+#### 7. Status transition to `Refunded`
+
+When every milestone is either released or refunded the contract status transitions to
+`ContractStatus::Refunded`.  This is a terminal state: no further deposits, releases, or
+refunds are possible.
+
+#### 8. Event emission for indexers
+
+Two events are emitted on a successful call:
+
+| Event | Topics | Data |
+|-------|--------|------|
+| `milestone_refunded` | `(contract_id,)` | `(milestone_idx, amount, timestamp)` |
+| `contract_refunded`  | `(contract_id,)` | `(total_refund, cumulative_refunded, timestamp)` |
+
+Per-milestone events allow indexers to track individual refunds; the contract-level event
+provides a summary for dashboards.
+
+### Threat Analysis
+
+| Threat | Mitigation | Residual Risk |
+|--------|-----------|---------------|
+| Double-refund same milestone | `refunded` flag, panics on second attempt | Negligible |
+| Refund after release | `released` check before any mutation | Negligible |
+| Refund exceeds balance | Balance cap check before mutation | Negligible |
+| Duplicate indices in one call | O(n²) dedup check (n ≤ 10) | Negligible |
+| Partial state on validation failure | All-or-nothing validation pass | Negligible |
+| Indexer double-counting | Per-milestone events keyed by `(contract_id, milestone_idx)` | Low (indexer must deduplicate) |
+
+### Coverage Matrix Update
+
+| Operation | On-Chain Security | Test Coverage |
+|-----------|------------------|---------------|
+| `refund_milestone` — single milestone | Balance cap, released/refunded flags | **HIGH** |
+| `refund_milestone` — multiple milestones | Duplicate check, all-or-nothing | **HIGH** |
+| `refund_milestone` — all milestones | Status → Refunded | **HIGH** |
+| Mixed release + refund | Invariant verification | **HIGH** |
+| Double-refund guard | `MilestoneAlreadyRefunded` error | **HIGH** |
+| Refund-after-release guard | `MilestoneAlreadyReleased` error | **HIGH** |
+| Insufficient balance guard | `InsufficientEscrowBalance` error | **HIGH** |
+| Release-after-refund guard | `MilestoneAlreadyRefunded` error | **HIGH** |
