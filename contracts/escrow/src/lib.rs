@@ -1,7 +1,7 @@
 #![no_std]
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Bytes, BytesN, Env,
+    contract, contracterror, contractimpl, contracttype, Address, Bytes, BytesN, Env,
     Symbol, Vec,
 };
 
@@ -321,7 +321,15 @@ impl Escrow {
     }
 
     pub fn cancel(env: Env, contract_id: u32) -> bool {
-        Self::cancel_contract(env, contract_id, Address::generate(&env))
+        let contract_key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, EscrowContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+        contract.status = ContractStatus::Cancelled;
+        env.storage().persistent().set(&contract_key, &contract);
+        true
     }
 
     pub fn dispute(env: Env, contract_id: u32) -> bool {
@@ -459,7 +467,7 @@ impl Escrow {
         true
     }
 
-    pub fn get_reputation(env: Env, freelancer: Address) -> Option<Reputation> {
+    pub fn get_reputation(_env: Env, _freelancer: Address) -> Option<Reputation> {
         Some(Reputation {
             total_rating: 5,
             ratings_count: 1,
