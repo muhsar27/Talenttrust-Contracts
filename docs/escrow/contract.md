@@ -111,19 +111,21 @@ Emits `contract_cancelled` event with:
 ## Contract Lifecycle
 
 ```
-Created ──────────────→ Funded ───────────→ Completed
-   │                      │                     │
-   │                      │                     ✗ (no cancellation)
-   ↓                      ↓
-Cancelled ←───────────────┘
+Created ──────────────→ Accepted ───────────→ Funded ───────────→ Completed
+   │                          │                     │
+   │                          │                     ✗ (no cancellation)
+   ↓                          ↓
+Cancelled ←───────────────────┘
    │
    ↓ (Disputed)
 Disputed ──────────────→ Cancelled (arbiter only)
 ```
 
 **Key Transitions:**
-- Created → Funded: Client deposits funds
+- Created → Accepted: Freelancer or arbiter accepts the contract terms
+- Accepted → Funded: Client deposits funds after acceptance
 - Created → Cancelled: Client or freelancer cancels
+- Accepted → Cancelled: Client or freelancer cancels prior to funding
 - Funded → Cancelled: Client (no releases), freelancer, or arbiter cancels
 - Funded → Completed: All milestones released
 - Funded → Disputed: Dispute raised

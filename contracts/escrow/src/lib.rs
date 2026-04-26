@@ -12,9 +12,8 @@ pub use ttl::{
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
 };
 
-use types::ContractStatus;
-
 mod types;
+use crate::types::ContractStatus;
 
 // ─── Bounds constants ─────────────────────────────────────────────────────────
 //
@@ -41,10 +40,6 @@ pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000; // 1 M tokens × 1
 pub const MAINNET_PROTOCOL_VERSION: u32 = 1u32;
 pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000_000i128;
 
-mod types;
-pub use crate::types::{MainnetReadinessInfo, ReadinessChecklist};
-use crate::types::DataKey as ReadinessDataKey;
-
 #[contract]
 pub struct Escrow;
 
@@ -70,10 +65,19 @@ pub struct EscrowContractData {
     pub client: Address,
     pub freelancer: Address,
     pub arbiter: Option<Address>,
-    pub milestones: Vec<i128>,
+    pub milestones: Vec<types::Milestone>,
     pub status: ContractStatus,
-    pub total_deposited: i128,
+    pub funded_amount: i128,
     pub released_amount: i128,
+}
+
+pub type ContractData = EscrowContractData;
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct EscrowBounds {
+    pub max_milestones: u32,
+    pub max_total_escrow_stroops: i128,
 }
 
 #[contracttype]
@@ -97,24 +101,12 @@ pub struct PendingMigration {
 #[contracttype]
 #[derive(Clone)]
 enum DataKey {
+    ContractCount,
     Contract(u32),
+    Milestones(u32),
     MilestoneReleased(u32, u32),
+    MilestoneApprovalTime(u32, u32),
     RefundableBalance(u32),
-}
-
-fn update_readiness_checklist<F>(env: &Env, f: F)
-where
-    F: FnOnce(&mut ReadinessChecklist),
-{
-    let mut checklist: ReadinessChecklist = env
-        .storage()
-        .instance()
-        .get(&ReadinessDataKey::ReadinessChecklist)
-        .unwrap_or_default();
-    f(&mut checklist);
-    env.storage()
-        .instance()
-        .set(&ReadinessDataKey::ReadinessChecklist, &checklist);
 }
 
 #[contractimpl]
@@ -162,16 +154,18 @@ impl Escrow {
         }
 
         let mut total_amount: i128 = 0;
-        let mut milestones: Vec<Milestone> = Vec::new(&env);
-        for amount in milestone_amounts.iter() {
+        let mut milestone_records: Vec<types::Milestone> = Vec::new(&env);
+        for amount in milestones.iter() {
             if amount <= 0 {
                 env.panic_with_error(EscrowError::InvalidMilestoneAmount);
             }
             total_amount += amount;
-            milestones.push_back(Milestone {
-                amount,
+            milestone_records.push_back(types::Milestone {
+                amount: *amount,
                 released: false,
                 refunded: false,
+                work_evidence: None,
+                funded_amount: 0,
             });
         }
 
@@ -185,16 +179,16 @@ impl Escrow {
             client,
             freelancer,
             arbiter,
-            milestones,
+            milestones: milestone_records.clone(),
             status: ContractStatus::Created,
-            total_deposited: 0,
+            funded_amount: 0,
             released_amount: 0,
         };
 
         env.storage().persistent().set(&DataKey::Contract(id), &data);
         env.storage()
             .persistent()
-            .set(&DataKey::Milestones(id), &milestones);
+            .set(&DataKey::Milestones(id), &milestone_records);
         env.storage().persistent().set(&DataKey::ContractCount, &(id + 1));
 
         id
@@ -212,14 +206,59 @@ impl Escrow {
             .get::<_, ContractData>(&contract_key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
-        contract.total_deposited += amount;
-
-        // Update status to Funded if not already
-        if contract.status == ContractStatus::Created {
-            contract.status = ContractStatus::Funded;
+        match contract.status {
+            ContractStatus::Created => {
+                env.panic_with_error(EscrowError::InvalidStatusTransition);
+            }
+            ContractStatus::Accepted => {
+                contract.status = ContractStatus::Funded;
+            }
+            ContractStatus::Funded => {}
+            _ => {
+                env.panic_with_error(EscrowError::InvalidStatusTransition);
+            }
         }
 
+        contract.funded_amount += amount;
         env.storage().persistent().set(&contract_key, &contract);
+
+        true
+    }
+
+    pub fn accept_contract(env: Env, contract_id: u32, caller: Address) -> bool {
+        caller.require_auth();
+
+        let contract_key = DataKey::Contract(contract_id);
+        let mut contract = env
+            .storage()
+            .persistent()
+            .get::<_, ContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        let is_freelancer = caller == contract.freelancer;
+        let is_arbiter = contract
+            .arbiter
+            .as_ref()
+            .is_some_and(|a| *a == caller);
+
+        if !is_freelancer && !is_arbiter {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        if contract.status == ContractStatus::Accepted {
+            return true;
+        }
+
+        if contract.status != ContractStatus::Created {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        contract.status = ContractStatus::Accepted;
+        env.storage().persistent().set(&contract_key, &contract);
+        env.events().publish(
+            (Symbol::new(&env, "contract_accepted"), contract_id),
+            (caller, contract.status, env.ledger().timestamp()),
+        );
 
         true
     }
@@ -247,13 +286,81 @@ impl Escrow {
         env.storage().persistent().set(&milestone_key, &true);
 
         // Update released amount
-        if let Some(amount) = contract.milestones.get(milestone_index) {
-            contract.released_amount += amount;
+        if let Some(milestone) = contract.milestones.get(milestone_index) {
+            contract.released_amount += milestone.amount;
         }
 
         env.storage().persistent().set(&contract_key, &contract);
 
         true
+    }
+
+    pub fn finalize_contract(env: Env, contract_id: u32, caller: Address) -> bool {
+        caller.require_auth();
+
+        let contract_key = DataKey::Contract(contract_id);
+        let contract = env
+            .storage()
+            .persistent()
+            .get::<_, ContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        if contract.status != ContractStatus::Funded {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        let refundable_balance = contract.funded_amount - contract.released_amount;
+        if refundable_balance < 0 {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        env.storage()
+            .persistent()
+            .set(&DataKey::RefundableBalance(contract_id), &refundable_balance);
+        env.events().publish(
+            (Symbol::new(&env, "contract_finalized"), contract_id),
+            (caller, refundable_balance, env.ledger().timestamp()),
+        );
+
+        true
+    }
+
+    pub fn withdraw_leftover(env: Env, contract_id: u32, caller: Address) -> i128 {
+        caller.require_auth();
+
+        let contract_key = DataKey::Contract(contract_id);
+        let contract = env
+            .storage()
+            .persistent()
+            .get::<_, ContractData>(&contract_key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        if caller != contract.client {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        let mut refundable_balance: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::RefundableBalance(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::InvalidStatusTransition));
+
+        if refundable_balance <= 0 {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        let payout = refundable_balance;
+        refundable_balance = 0;
+        env.storage()
+            .persistent()
+            .set(&DataKey::RefundableBalance(contract_id), &refundable_balance);
+
+        env.events().publish(
+            (Symbol::new(&env, "contract_withdrawn"), contract_id),
+            (caller, payout, env.ledger().timestamp()),
+        );
+
+        payout
     }
 
     /// Get contract details
@@ -265,7 +372,7 @@ impl Escrow {
     }
 
     /// Get milestones for a contract
-    pub fn get_milestones(env: Env, contract_id: u32) -> Vec<i128> {
+    pub fn get_milestones(env: Env, contract_id: u32) -> Vec<types::Milestone> {
         let contract = Self::get_contract(env.clone(), contract_id);
         contract.milestones
     }
@@ -299,7 +406,7 @@ impl Escrow {
         let is_arbiter = contract.arbiter.as_ref().is_some_and(|a| *a == caller);
 
         match contract.status {
-            ContractStatus::Created => {
+            ContractStatus::Created | ContractStatus::Accepted => {
                 // Client or freelancer can cancel before funding
                 if !is_client && !is_freelancer {
                     env.panic_with_error(EscrowError::UnauthorizedRole);
