@@ -59,7 +59,14 @@ fn test_reputation_timing_fail() {
     let milestones = vec![&env, 200_0000000_i128];
 
     env.mock_all_auths();
-    let escrow_id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    let escrow_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &None,
+        &None,
+    );
     // Not releasing any milestone here, so contract status is Created or Funded
 
     let res = client.try_issue_reputation(&escrow_id, &client_addr, &freelancer_addr, &5);

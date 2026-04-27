@@ -36,6 +36,16 @@ pub enum EscrowError {
     NotReadyForFinalization = 16,
     AlreadyReleased = 17,
     InsufficientFunds = 18,
+    SelfRating = 19,
+    CommentTooLong = 20,
+    EmptyComment = 21,
+    AmountMustBePositive = 22,
+    FundingExceedsRequired = 23,
+    InvalidState = 24,
+    InsufficientEscrowBalance = 25,
+    MilestoneNotFound = 26,
+    AlreadyApproved = 27,
+    ReputationAlreadyIssued = 28,
 }
 
 #[contracttype]

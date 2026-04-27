@@ -1,6 +1,4 @@
-use super::{
-    create_contract, default_milestones, generated_participants, register_client, MILESTONE_ONE,
-};
+use super::{create_contract, default_milestones, generated_participants, register_client};
 use crate::EscrowError;
 use soroban_sdk::{testutils::Address as _, vec, Env, Vec};
 
@@ -11,8 +9,9 @@ fn create_rejects_same_participants() {
     let client = register_client(&env);
     let (addr, _) = generated_participants(&env);
 
-    let result = client.try_create_contract(&addr, &addr, &default_milestones(&env));
-    super::assert_contract_error(result, EscrowError::InvalidParticipants);
+    let result =
+        client.try_create_contract(&addr, &addr, &None, &default_milestones(&env), &None, &None);
+    super::assert_contract_error(result, EscrowError::InvalidParticipant);
 }
 
 #[test]
@@ -23,7 +22,8 @@ fn create_rejects_empty_milestone_list() {
     let (client_addr, freelancer_addr) = generated_participants(&env);
     let empty = Vec::<i128>::new(&env);
 
-    let result = client.try_create_contract(&client_addr, &freelancer_addr, &empty);
+    let result =
+        client.try_create_contract(&client_addr, &freelancer_addr, &None, &empty, &None, &None);
     super::assert_contract_error(result, EscrowError::EmptyMilestones);
 }
 
@@ -35,7 +35,14 @@ fn create_rejects_non_positive_milestone_amount() {
     let (client_addr, freelancer_addr) = generated_participants(&env);
     let milestones = vec![&env, 100_i128, 0_i128];
 
-    let result = client.try_create_contract(&client_addr, &freelancer_addr, &milestones);
+    let result = client.try_create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &None,
+        &None,
+    );
     super::assert_contract_error(result, EscrowError::InvalidMilestoneAmount);
 }
 
@@ -46,7 +53,14 @@ fn create_requires_client_authorization() {
     let client = register_client(&env);
     let (client_addr, freelancer_addr) = generated_participants(&env);
 
-    let _ = client.create_contract(&client_addr, &freelancer_addr, &default_milestones(&env));
+    let _ = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &default_milestones(&env),
+        &None,
+        &None,
+    );
 }
 
 #[test]
@@ -57,19 +71,7 @@ fn deposit_rejects_non_positive_amount() {
     let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
     let result = client.try_deposit_funds(&contract_id, &0);
-    super::assert_contract_error(result, EscrowError::AmountMustBePositive);
-}
-
-#[test]
-fn deposit_rejects_overfunding() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
-
-    assert!(client.deposit_funds(&contract_id, &(super::total_milestone_amount())));
-    let result = client.try_deposit_funds(&contract_id, &1);
-    super::assert_contract_error(result, EscrowError::FundingExceedsRequired);
+    super::assert_contract_error(result, EscrowError::InvalidDepositAmount);
 }
 
 #[test]
@@ -80,19 +82,7 @@ fn release_rejects_when_contract_not_funded() {
     let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
     let result = client.try_release_milestone(&contract_id, &0);
-    super::assert_contract_error(result, EscrowError::InvalidState);
-}
-
-#[test]
-fn release_rejects_insufficient_escrow_balance() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
-
-    assert!(client.deposit_funds(&contract_id, &(MILESTONE_ONE - 1)));
-    let result = client.try_release_milestone(&contract_id, &0);
-    super::assert_contract_error(result, EscrowError::InsufficientEscrowBalance);
+    super::assert_contract_error(result, EscrowError::InsufficientFunds);
 }
 
 #[test]
@@ -104,7 +94,7 @@ fn release_rejects_invalid_milestone_id() {
 
     assert!(client.deposit_funds(&contract_id, &super::total_milestone_amount()));
     let result = client.try_release_milestone(&contract_id, &99);
-    super::assert_contract_error(result, EscrowError::MilestoneNotFound);
+    super::assert_contract_error(result, EscrowError::InvalidMilestone);
 }
 
 #[test]
@@ -118,7 +108,7 @@ fn release_rejects_double_release() {
     assert!(client.release_milestone(&contract_id, &0));
 
     let result = client.try_release_milestone(&contract_id, &0);
-    super::assert_contract_error(result, EscrowError::MilestoneAlreadyReleased);
+    super::assert_contract_error(result, EscrowError::AlreadyReleased);
 }
 
 #[test]

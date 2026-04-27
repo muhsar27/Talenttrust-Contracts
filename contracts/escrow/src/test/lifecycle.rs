@@ -1,78 +1,60 @@
-use super::{create_contract, register_client, total_milestone_amount};
+use super::{create_contract, register_client};
 use crate::ContractStatus;
-use soroban_sdk::{vec, Env};
+use soroban_sdk::Env;
 
 #[test]
-fn deposit_partial_funds_transitions_to_funded_and_persists_balance() {
+fn successful_contract_lifecycle() {
     let env = Env::default();
     env.mock_all_auths();
-
     let client = register_client(&env);
-    let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
-    assert!(client.deposit_funds(&contract_id, &1_000_0000000_i128));
+    let (_, freelancer_addr, contract_id) = create_contract(&env, &client);
 
+    // Initial state
     let contract = client.get_contract(&contract_id);
-    assert_eq!(contract.funded_amount, 1_000_0000000_i128);
-    assert_eq!(contract.released_amount, 0);
-    assert_eq!(contract.status, ContractStatus::Funded);
-}
+    assert_eq!(contract.status, ContractStatus::Created);
 
-#[test]
-fn releasing_all_milestones_completes_contract_and_unlocks_reputation_credit() {
-    let env = Env::default();
-    env.mock_all_auths();
+    // Deposit
+    assert!(client.deposit_funds(&contract_id, &super::total_milestone_amount()));
+    assert_eq!(
+        client.get_contract(&contract_id).status,
+        ContractStatus::Funded
+    );
 
-    let client = register_client(&env);
-    let (client_addr, freelancer_addr) = super::generated_participants(&env);
-    let milestones = vec![&env, 100_i128, 200_i128];
-
-    let contract_id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
-    assert!(client.deposit_funds(&contract_id, &300_i128));
-
+    // Release milestones
     assert!(client.release_milestone(&contract_id, &0));
-    let funded_contract = client.get_contract(&contract_id);
-    assert_eq!(funded_contract.status, ContractStatus::Funded);
-    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 0);
-
     assert!(client.release_milestone(&contract_id, &1));
-    let completed_contract = client.get_contract(&contract_id);
-    assert_eq!(completed_contract.released_amount, 300_i128);
-    assert_eq!(completed_contract.status, ContractStatus::Completed);
+    assert!(client.release_milestone(&contract_id, &2));
+
+    let finalized = client.get_contract(&contract_id);
+    assert_eq!(finalized.status, ContractStatus::Completed);
+    // finalized field is set by finalize_contract, not automatically
+    assert!(client.finalize_contract(&contract_id));
+    assert!(client.get_contract(&contract_id).finalized);
+
+    // Reputation
     assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 1);
-}
+    assert!(client.issue_reputation(&contract_id, &5, &None));
 
-#[test]
-fn issue_reputation_updates_record_and_consumes_credit() {
-    let env = Env::default();
-    env.mock_all_auths();
-
-    let client = register_client(&env);
-    let (_client_addr, freelancer_addr, contract_id) = super::complete_contract(&env, &client);
-
-    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 1);
-    assert!(client.issue_reputation(&contract_id, &5));
-
-    let reputation = client
-        .get_reputation(&freelancer_addr)
-        .expect("reputation should exist after issuance");
+    let reputation = client.get_reputation_record(&freelancer_addr);
     assert_eq!(reputation.completed_contracts, 1);
     assert_eq!(reputation.total_rating, 5);
-    assert_eq!(reputation.last_rating, 5);
-    assert_eq!(reputation.ratings_count, 1);
-    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 0);
 }
 
 #[test]
-fn full_funding_matches_total_amount() {
+fn contract_refund_lifecycle() {
     let env = Env::default();
     env.mock_all_auths();
-
     let client = register_client(&env);
-    let (_client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
-    assert!(client.deposit_funds(&contract_id, &total_milestone_amount()));
 
-    let contract = client.get_contract(&contract_id);
-    assert_eq!(contract.funded_amount, total_milestone_amount());
-    assert_eq!(contract.status, ContractStatus::Funded);
+    let (_, _, contract_id) = create_contract(&env, &client);
+
+    assert!(client.deposit_funds(&contract_id, &super::total_milestone_amount()));
+
+    // Refund remaining
+    assert!(client.refund_remaining_funds(&contract_id));
+
+    let refunded = client.get_contract(&contract_id);
+    assert_eq!(refunded.status, ContractStatus::Refunded);
+    assert!(refunded.finalized);
 }

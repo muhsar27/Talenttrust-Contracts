@@ -5,7 +5,7 @@ mod summary;
 
 use crate::{Escrow, EscrowClient};
 
-use crate::{ContractStatus, Escrow, EscrowClient};
+use crate::{ContractStatus, Escrow, EscrowClient, EscrowError};
 
 fn register_client(env: &Env) -> EscrowClient {
     let id = env.register(Escrow, ());
