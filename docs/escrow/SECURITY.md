@@ -458,9 +458,9 @@ The `cancel_contract` function implements six critical security guarantees:
 
 ## Version
 
-- **Version:** 0.3.0
-- **Last Updated:** 2026-04-24
-- **Threat Model:** Complete (updated for cancellation, refunds, disputes, and governance)
+- **Version:** 0.3.1
+- **Last Updated:** 2026-04-25
+- **Threat Model:** Complete (updated for identity validation, cancellation, refunds, disputes, and governance)
 - **Risk Assessment:** Mitigations adequate for production use with noted caveats.
 
 ---
@@ -700,6 +700,163 @@ The `cancel_contract` function implements six critical security guarantees:
 - Governance dashboard should display all proposals and voting status.
 - Notification system for timelock activations.
 - Emergency contact protocol for critical security events.
+
+---
+
+## Identity Validation Threat Model (v0.3.1)
+
+### Threat 16: Role Overlap and Identity Confusion (Severity: HIGH)
+
+**Attack:** Attacker or colluding parties create a contract where the same address holds multiple roles, enabling unauthorized actions.
+
+**Scenarios:**
+1. Client creates contract with `client == freelancer` (same address).
+   - Client can self-approve milestone releases without freelancer consent.
+   - Client can self-issue reputation without delivering work.
+2. Client creates contract with `arbiter == client`.
+   - Client can unilaterally cancel contract in `Disputed` state.
+   - Client can resolve disputes in their own favor.
+3. Freelancer creates contract with `arbiter == freelancer`.
+   - Freelancer can cancel contract in `Disputed` state.
+   - Freelancer can resolve disputes in their own favor.
+
+**Impact:** Complete bypass of multi-party authorization model. Single actor controls all contract decisions.
+
+**Mitigations:**
+
+1. **Fail-Closed Identity Validation (Constraint 1):**
+   - `validate_participant_identities()` function checks all identity rules before contract creation.
+   - Validation happens **before any storage writes** (fail-closed principle).
+   - Panics with specific error codes if any rule is violated.
+
+2. **Client ≠ Freelancer Rule (Constraint 2):**
+   - Contract panics with `EscrowError::ClientEqualsFreelancer` (error code 17) if `client == freelancer`.
+   - Prevents self-approval of milestone releases and self-collection of funds.
+   - Enforced at contract creation time; cannot be bypassed later.
+
+3. **Arbiter Independence Rule (Constraint 3):**
+   - Contract panics with `EscrowError::ArbiterRoleOverlap` (error code 18) if:
+     - `arbiter == client`, OR
+     - `arbiter == freelancer`
+   - Ensures arbiter is a fully independent third party.
+   - Prevents arbiter from unilaterally cancelling or resolving disputes in their favor.
+
+4. **Optional Arbiter Support (Constraint 4):**
+   - Arbiter can be `None` (no third-party dispute resolution).
+   - If `None`, no arbiter-specific checks are performed.
+   - Allows two-party contracts without requiring a third party.
+
+5. **Atomic Validation (Constraint 5):**
+   - All identity checks are performed in a single atomic operation.
+   - No partial state is possible; either all checks pass or entire transaction reverts.
+   - Prevents race conditions or concurrent validation bypasses.
+
+**Residual Risk:** Very low. Identity validation is cryptographic (address equality) and cannot be spoofed. Assumes Soroban SDK's address comparison is correct.
+
+---
+
+### Threat 17: Arbiter Collusion (Severity: MEDIUM)
+
+**Attack:** Arbiter colludes with one party to unfairly resolve disputes or cancel contracts.
+
+**Mitigations:**
+
+1. **Transparent Audit Trail:**
+   - All arbiter actions (cancellation, dispute resolution) are on-chain and auditable.
+   - Off-chain governance can review arbiter decisions and penalize bias.
+
+2. **Reputation System:**
+   - Arbiters with poor dispute resolution records can be de-listed.
+   - Freelancers and clients can choose arbiters based on reputation.
+
+3. **Multi-Arbiter Support (Future):**
+   - High-value contracts can require multiple arbiters for consensus.
+   - Prevents single arbiter collusion.
+
+**Residual Risk:** **MEDIUM** if arbiter selection is not properly decentralized. Choose arbiters with conflict resolution experience and good reputation.
+
+---
+
+### Threat 18: Identity Spoofing via Contract Reuse (Severity: LOW)
+
+**Attack:** Attacker creates multiple contracts with overlapping identities to confuse off-chain systems.
+
+**Scenarios:**
+1. Attacker creates contract A: `(alice, bob, charlie)`.
+2. Attacker creates contract B: `(alice, bob, diana)`.
+3. Off-chain system confuses the two contracts and attributes reputation incorrectly.
+
+**Mitigations:**
+
+1. **Unique Contract IDs:**
+   - Each contract has a unique `contract_id` assigned at creation.
+   - Off-chain systems must use `(contract_id, event_type)` as the deduplication key.
+
+2. **Event Transparency:**
+   - All events include the full contract ID and participant addresses.
+   - Off-chain systems can verify participant consistency across events.
+
+3. **Audit Trail:**
+   - Complete on-chain history of all contracts and their participants.
+   - Off-chain systems can reconstruct and verify contract lineage.
+
+**Residual Risk:** Very low. Assumes off-chain systems properly deduplicate by contract ID.
+
+---
+
+### Identity Validation Test Coverage
+
+The test suite in `test/input_sanitization_identities.rs` covers:
+
+1. **Client ≠ Freelancer Rule:**
+   - ✓ Rejects `client == freelancer`
+   - ✓ Accepts distinct client and freelancer
+   - ✓ Multiple contracts with different participants
+
+2. **Arbiter Independence Rule:**
+   - ✓ Rejects `arbiter == client`
+   - ✓ Rejects `arbiter == freelancer`
+   - ✓ Accepts distinct arbiter (different from both)
+   - ✓ Rejects partial arbiter overlap
+
+3. **Optional Arbiter:**
+   - ✓ Accepts `None` arbiter
+   - ✓ Accepts `Some(arbiter)` with distinct address
+
+4. **Fail-Closed Validation:**
+   - ✓ Validation happens before storage writes
+   - ✓ No partial state on validation failure
+
+5. **Edge Cases:**
+   - ✓ Three-way distinct addresses
+   - ✓ Multiple distinct contracts
+   - ✓ Non-contiguous participant sets
+
+**Test Count:** 13 comprehensive tests covering all rules and edge cases.
+
+---
+
+### Security Recommendations for Identity Validation
+
+### For Clients
+1. **Verify Freelancer Identity:** Confirm freelancer address off-chain before contract creation.
+2. **Choose Independent Arbiter:** Select an arbiter with no financial interest in the outcome.
+3. **Monitor Contract Creation:** Verify contract was created with correct participants via `get_contract()`.
+
+### For Freelancers
+1. **Verify Client Identity:** Confirm client address off-chain before contract creation.
+2. **Verify Arbiter Independence:** Ensure arbiter is not affiliated with client.
+3. **Monitor Contract State:** Watch for unauthorized contract modifications.
+
+### For Arbiters
+1. **Remain Neutral:** Do not create contracts where you are a participant.
+2. **Disclose Conflicts:** If you have a financial interest, recuse yourself.
+3. **Document Decisions:** Record reasoning for all dispute resolutions.
+
+### For Off-Chain Integration
+1. **Deduplicate by Contract ID:** Use `(contract_id, event_type)` as deduplication key.
+2. **Verify Participants:** Cross-check participant addresses in events against contract creation.
+3. **Audit Trail:** Maintain complete history of all contracts and their participants.
 
 ---
 
