@@ -45,7 +45,7 @@ pub const MAX_MILESTONES: u32 = 10;
 
 /// Hard cap on the total escrow value per contract, in stroops (7 decimal places).
 /// Equals 1 000 000 tokens.
-pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000; // 1 M tokens × 10^7 = 10^13
+pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 10_000_000_000_000; // 1 M tokens × 10^7 = 10^13
 
 pub const MAINNET_PROTOCOL_VERSION: u32 = 1u32;
 pub const MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS: i128 = 1_000_000_000_000_000i128;
@@ -125,6 +125,8 @@ pub enum DisputeResolution {
     /// Cancel the contract (no further payments).
     Cancel = 2,
 }
+
+pub type ContractData = EscrowContractData;
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -7,6 +7,10 @@ pub enum DataKey {
     Milestones,
     Initialized,
     MilestoneFunded(u32),
+    Admin,
+    ProtocolFeeBps,
+    AccumulatedProtocolFees,
+    ReadinessChecklist,
 }
 
 #[contracterror]
