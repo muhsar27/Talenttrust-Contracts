@@ -29,7 +29,7 @@ use crate::{
 // ---------------------------------------------------------------------------
 
 /// Register the contract and return a client.
-fn register_client(env: &Env) -> EscrowClient {
+fn register_client(env: &Env) -> EscrowClient<'_> {
     let id = env.register(Escrow, ());
     EscrowClient::new(env, &id)
 }
@@ -55,6 +55,7 @@ fn future(env: &Env, offset_secs: u64) -> u64 {
 }
 
 /// Build a `Vec<Option<MilestoneSchedule>>` of `n` `None` entries.
+#[allow(dead_code)]
 fn no_schedules(env: &Env, n: u32) -> Vec<Option<MilestoneSchedule>> {
     let mut v: Vec<Option<MilestoneSchedule>> = Vec::new(env);
     for _ in 0..n {
@@ -64,7 +65,7 @@ fn no_schedules(env: &Env, n: u32) -> Vec<Option<MilestoneSchedule>> {
 }
 
 /// Build a minimal schedule with only a `due_date`.
-fn dated_schedule(env: &Env, due: u64) -> MilestoneSchedule {
+fn dated_schedule(_env: &Env, due: u64) -> MilestoneSchedule {
     MilestoneSchedule {
         due_date: Some(due),
         title: None,

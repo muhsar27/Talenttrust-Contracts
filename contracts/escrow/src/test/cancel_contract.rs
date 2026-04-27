@@ -8,16 +8,16 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Address as _, testutils::Events as _, vec, Address, Env, Vec};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{ContractStatus, Escrow, EscrowClient, EscrowError};
+use crate::{ContractStatus, Escrow, EscrowClient};
 
 // ---------------------------------------------------------------------------
 // Test helpers
 // ---------------------------------------------------------------------------
 
 /// Register the contract and return a client.
-fn register_client(env: &Env) -> EscrowClient {
+fn register_client(env: &Env) -> EscrowClient<'_> {
     let id = env.register(Escrow, ());
     EscrowClient::new(env, &id)
 }
@@ -40,7 +40,14 @@ fn create_default_contract(
     arbiter_addr: &Option<Address>,
 ) -> u32 {
     let milestones = vec![env, 100_i128, 200_i128, 300_i128];
-    client.create_contract(client_addr, freelancer_addr, arbiter_addr, &milestones)
+    client.create_contract(
+        client_addr,
+        freelancer_addr,
+        arbiter_addr,
+        &milestones,
+        &None,
+        &None,
+    )
 }
 
 /// Fund a contract with the full milestone amount (600 total).
@@ -338,11 +345,8 @@ fn cancellation_emits_correct_event() {
     // Cancel
     assert!(client.cancel_contract(&contract_id, &client_addr));
 
-    // Event was emitted successfully (verified by successful cancellation)
-    // The event structure is:
-    // Topics: ("contract_cancelled", contract_id)
-    // Data: (caller, status, timestamp)
-    // This can be verified in test snapshots
+    let events = env.events().all();
+    assert!(!events.is_empty(), "cancel_contract must emit an event");
 }
 
 /// Cancellation is idempotent (consistent error on multiple attempts).
@@ -379,6 +383,8 @@ fn arbiter_overlap_with_client_rejected() {
         &freelancer_addr,
         &Some(client_addr.clone()),
         &milestones,
+        &None,
+        &None,
     );
 }
 
@@ -398,6 +404,8 @@ fn arbiter_overlap_with_freelancer_rejected() {
         &freelancer_addr,
         &Some(freelancer_addr.clone()),
         &milestones,
+        &None,
+        &None,
     );
 }
 

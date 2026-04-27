@@ -17,7 +17,10 @@ The escrow contract now supports **optional per-milestone scheduling information
 | `description` | `Option<String>` | Extended deliverable description (≤ 512 bytes) |
 | `updated_at` | `u64` | Ledger timestamp of the last write — **set by the contract, not the caller** |
 
-Schedule metadata is **informational / off-chain signalling only**. The contract does not automatically cancel, refund, or release milestones when a deadline passes. Deadline enforcement is the responsibility of the calling application.
+Schedule metadata is persisted separately, but `due_date` is also mirrored into
+each milestone's on-chain `deadline_at` field. That means milestone deadlines
+are not merely descriptive anymore: the escrow contract enforces them during
+approval and release using ledger time.
 
 ---
 
@@ -110,7 +113,9 @@ This keeps schedule data separate from the `EscrowContractData` record so that t
 
 5. **Past due dates** — a `due_date` ≤ `env.ledger().timestamp()` is always rejected, preventing confusion between "already overdue" and "not yet due" states.
 
-6. **`updated_at` integrity** — the `updated_at` field is set from `env.ledger().timestamp()` by the contract, not from a caller-supplied value. Callers cannot back-date or future-date the timestamp.
+6. **Deadline enforcement** — once ledger time moves strictly past `due_date`, milestone approval/release is blocked and the contract is moved to `Disputed`.
+
+7. **`updated_at` integrity** — the `updated_at` field is set from `env.ledger().timestamp()` by the contract, not from a caller-supplied value. Callers cannot back-date or future-date the timestamp.
 
 ---
 
@@ -144,3 +149,13 @@ All new code lives in `contracts/escrow/src/test/milestone_schedule.rs`.
 ## Migration Notes
 
 `create_contract` has a new final parameter `schedules: Vec<Option<MilestoneSchedule>>`. Existing callers must be updated to pass `Vec::new(&env)` to preserve the old behaviour (no schedule metadata).
+
+## Timeout integration
+
+`MilestoneSchedule.due_date` now feeds runtime timeout logic:
+
+- at `timestamp == due_date`, approval/release is still allowed
+- at `timestamp > due_date`, approval/release is rejected
+- the contract transitions from `Funded` to `Disputed`
+- the dispute can be resolved only by the arbiter, or by the client when no
+  arbiter exists

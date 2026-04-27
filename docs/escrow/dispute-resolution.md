@@ -113,6 +113,18 @@ Created → Funded → Completed
          Disputed → Resolved
 ```
 
+## Timeout Dispute Policy
+
+Deadline-driven disputes follow a narrower policy than generic payout disputes:
+
+- an expired milestone causes `Funded -> Disputed`
+- expiry is determined only from `env.ledger().timestamp()` and the stored
+  milestone deadline
+- if an arbiter is configured, only the arbiter may resolve the dispute
+- if no arbiter is configured, the client may resolve the dispute
+- a timeout dispute cannot be resolved while any unreleased milestone is still
+  expired; the client must first update schedule metadata to a future due date
+
 ### Dispute State Flow
 ```
 Open → InReview → Resolved
