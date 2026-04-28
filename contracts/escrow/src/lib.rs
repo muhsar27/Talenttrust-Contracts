@@ -728,6 +728,19 @@ impl Escrow {
         contract.milestones
     }
 
+    /// Get the readiness checklist. Panics with `ContractNotFound` if absent.
+    ///
+    /// The checklist is written by lifecycle operations (`initialize`,
+    /// `initialize_protocol_governance`, `activate_emergency_pause`, etc.).
+    /// Use the auto-generated `try_get_checklist` client wrapper for a
+    /// `Result`-returning variant that does not abort on missing data.
+    pub fn get_checklist(env: Env) -> ReadinessChecklist {
+        env.storage()
+            .persistent()
+            .get::<_, ReadinessChecklist>(&DataKey::ReadinessChecklist)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound))
+    }
+
     /// Cancel an escrow contract under strict authorization and state constraints.
     pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
         caller.require_auth();
