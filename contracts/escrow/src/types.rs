@@ -71,6 +71,10 @@ pub enum EscrowError {
     AmountExceedsMaximum = 38,
     InvalidStroopPrecision = 39,
     ExceedsContractMaximum = 40,
+    // Accounting invariant violations
+    AccountingInvariantViolated = 41,
+    // Audit event errors
+    AuditEventFailed = 42,
 }
 
 #[contracttype]

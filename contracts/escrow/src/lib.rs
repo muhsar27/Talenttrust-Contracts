@@ -126,6 +126,34 @@ impl Escrow {
         }
     }
 
+    // ─── Audit event helper ───────────────────────────────────────────────
+
+    /// Emit a compact audit log event for a state transition.
+    /// Tuple: (contract_id, from_status, to_status, actor, timestamp)
+    fn emit_audit_event(env: &Env, contract_id: u32, from: ContractStatus, to: ContractStatus, actor: &Address) {
+        env.events().publish(
+            (symbol_short!("audit"), contract_id),
+            (from as u32, to as u32, actor.clone(), env.ledger().timestamp()),
+        );
+    }
+
+    // ─── Accounting invariants ───────────────────────────────────────────
+
+    /// Validate the core accounting invariant:
+    ///   total_deposited == released_amount + refunded_amount + available_balance
+    /// Panics with `AccountingInvariantViolated` if the invariant is broken.
+    fn check_accounting_invariant(env: &Env, contract: &EscrowContractData, contract_id: u32) {
+        let available_balance = contract.total_deposited
+            - contract.released_amount
+            - contract.refunded_amount;
+        if available_balance < 0 {
+            env.panic_with_error(EscrowError::AccountingInvariantViolated);
+        }
+        if contract.total_deposited != contract.released_amount + contract.refunded_amount + available_balance {
+            env.panic_with_error(EscrowError::AccountingInvariantViolated);
+        }
+    }
+
     // ─── Initialization ───────────────────────────────────────────────────────
 
     /// One-time initialization. Sets the admin address.
@@ -356,6 +384,9 @@ impl Escrow {
             .persistent()
             .set(&DataKey::Contract(id), &data);
 
+        // Audit: contract created
+        Self::emit_audit_event(&env, id, ContractStatus::Created, ContractStatus::Created, &client);
+
         env.events().publish(
             (symbol_short!("created"), id),
             (client, freelancer, env.ledger().timestamp()),
@@ -378,6 +409,8 @@ impl Escrow {
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
+        let old_status = contract.status;
+
         contract.total_deposited =
             safe_add_amounts(contract.total_deposited, amount)
                 .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
@@ -386,7 +419,16 @@ impl Escrow {
             contract.status = ContractStatus::Funded;
         }
 
+        // Enforce accounting invariant
+        Self::check_accounting_invariant(&env, &contract, contract_id);
+
         env.storage().persistent().set(&key, &contract);
+
+        // Audit: deposit with state transition
+        if old_status != contract.status {
+            Self::emit_audit_event(&env, contract_id, old_status, contract.status, &contract.client);
+        }
+
         true
     }
 
@@ -428,6 +470,8 @@ impl Escrow {
             safe_add_amounts(contract.released_amount, milestone_amount)
                 .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
 
+        let old_status = contract.status;
+
         // Check if all milestones released → Completed
         let all_released = (0..contract.milestones.len()).all(|i| {
             env.storage()
@@ -449,7 +493,15 @@ impl Escrow {
                 .set(&credits_key, &(credits + 1));
         }
 
+        // Enforce accounting invariant
+        Self::check_accounting_invariant(&env, &contract, contract_id);
+
         env.storage().persistent().set(&key, &contract);
+
+        // Audit: release with state transition
+        if old_status != contract.status {
+            Self::emit_audit_event(&env, contract_id, old_status, contract.status, &contract.freelancer);
+        }
 
         env.events().publish(
             (symbol_short!("released"), contract_id, milestone_index),
@@ -500,8 +552,13 @@ impl Escrow {
         }
         env.storage().persistent().set(&rep_key, &true);
 
+        let old_status = contract.status;
+
         contract.reputation_issued = true;
         env.storage().persistent().set(&key, &contract);
+
+        // Audit: reputation issued
+        Self::emit_audit_event(&env, contract_id, old_status, contract.status, &caller);
 
         let reputation_key = DataKey::Reputation(freelancer.clone());
         let mut record: ReputationRecord = env
@@ -554,8 +611,16 @@ impl Escrow {
             env.panic_with_error(EscrowError::UnauthorizedRole);
         }
 
+        let old_status = contract.status;
         contract.status = ContractStatus::Cancelled;
+
+        // Enforce accounting invariant
+        Self::check_accounting_invariant(&env, &contract, contract_id);
+
         env.storage().persistent().set(&key, &contract);
+
+        // Audit: cancel with state transition
+        Self::emit_audit_event(&env, contract_id, old_status, contract.status, &caller);
 
         env.events().publish(
             (symbol_short!("cancelled"), contract_id),

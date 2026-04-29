@@ -344,6 +344,63 @@ If an invariant is violated:
 4. **Implement Fix:** Correct the bug causing violation
 5. **Add Test:** Add regression test for the specific scenario
 
+## Implementation (Updated)
+
+The contract now enforces the core accounting invariant on-chain:
+
+```rust
+fn check_accounting_invariant(env: &Env, contract: &EscrowContractData, contract_id: u32) {
+    let available_balance = contract.total_deposited
+        - contract.released_amount
+        - contract.refunded_amount;
+    if available_balance < 0 {
+        env.panic_with_error(EscrowError::AccountingInvariantViolated);
+    }
+    if contract.total_deposited != contract.released_amount + contract.refunded_amount + available_balance {
+        env.panic_with_error(EscrowError::AccountingInvariantViolated);
+    }
+}
+```
+
+This is called after every state mutation in:
+- `deposit_funds()` - after increasing `total_deposited`
+- `release_milestone()` - after increasing `released_amount`
+- `cancel_contract()` - before finalizing cancellation
+
+## Audit Events
+
+The contract emits compact audit log events for each state transition:
+
+```rust
+fn emit_audit_event(env: &Env, contract_id: u32, from: ContractStatus, to: ContractStatus, actor: &Address) {
+    env.events().publish(
+        (symbol_short!("audit"), contract_id),
+        (from as u32, to as u32, actor.clone(), env.ledger().timestamp()),
+    );
+}
+```
+
+### Audit Event Structure
+- **Topic**: `("audit", contract_id)`
+- **Data**: `(from_status, to_status, actor, timestamp)`
+
+### When Audit Events Are Emitted
+
+| Function | When Emitted | From Status | To Status |
+|----------|--------------|-------------|-----------|
+| `create_contract` | Always | Created | Created |
+| `deposit_funds` | On status change | Created | Funded |
+| `release_milestone` | On all released | Funded | Completed |
+| `issue_reputation` | Always | Completed | Completed |
+| `cancel_contract` | Always | Any | Cancelled |
+
+## New Error Codes
+
+| Code | Name | Description |
+|------|------|-------------|
+| 41 | `AccountingInvariantViolated` | Core accounting invariant violated |
+| 42 | `AuditEventFailed` | Audit event emission failed |
+
 ## References
 
 - [Soroban SDK Documentation](https://developers.stellar.org/docs/build/smart-contracts)
