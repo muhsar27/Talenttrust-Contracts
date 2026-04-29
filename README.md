@@ -34,14 +34,19 @@ cargo test test::performance -p escrow
 
 ## Escrow Emergency Controls
 
-The escrow contract now supports critical-incident response with admin-managed controls:
+The escrow contract supports critical-incident response with admin-managed controls:
 
 - `initialize(admin)` (one-time setup)
 - `pause()` and `unpause()`
 - `activate_emergency_pause()` and `resolve_emergency()`
 - `is_paused()` and `is_emergency()`
 
-When paused, mutating escrow operations are blocked.
+When paused, all mutating escrow operations (`create_contract`, `deposit_funds`,
+`release_milestone`, `issue_reputation`, `cancel_contract`) are blocked with
+`ContractPaused`. Read-only queries are never blocked.
+
+See [docs/escrow/emergency-controls.md](docs/escrow/emergency-controls.md) for
+the full flag semantics, event model, and security properties.
 
 ## Contributing
 

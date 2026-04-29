@@ -3,7 +3,7 @@
 //! Provides centralized validation for all money-like values in the escrow contract.
 //! Ensures positivity, max bounds, and proper stroop precision handling.
 
-use soroban_sdk::{Env, contracterror};
+use soroban_sdk::contracterror;
 
 /// Maximum number of decimal places for stroop precision (7 decimal places for Stellar)
 pub const STROOP_PRECISION: u8 = 7;
@@ -65,7 +65,7 @@ pub fn validate_single_amount(amount: i128) -> Result<(), AmountValidationError>
 pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, AmountValidationError> {
     let mut total: i128 = 0;
 
-    for (index, &amount) in amounts.iter().enumerate() {
+    for &amount in amounts.iter() {
         // Validate individual amount
         validate_single_amount(amount)?;
 
