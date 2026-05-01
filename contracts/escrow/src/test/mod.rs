@@ -6,8 +6,8 @@ use crate::{Escrow, EscrowClient, EscrowError};
 
 // ─── Submodules ───────────────────────────────────────────────────────────────
 
-mod pause_controls;
 mod emergency_controls;
+mod pause_controls;
 
 // ─── Shared constants ─────────────────────────────────────────────────────────
 
@@ -63,7 +63,10 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 ///   `Result<Result<T, ConversionError>, Result<soroban_sdk::Error, InvokeError>>`
 /// A contract-level `panic_with_error` surfaces as `Err(Ok(soroban_sdk::Error))`.
 pub fn assert_contract_error<T>(
-    result: Result<Result<T, soroban_sdk::ConversionError>, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
+    result: Result<
+        Result<T, soroban_sdk::ConversionError>,
+        Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
+    >,
     expected: EscrowError,
 ) {
     match result {
@@ -71,6 +74,9 @@ pub fn assert_contract_error<T>(
             let expected_err: soroban_sdk::Error = expected.into();
             assert_eq!(e, expected_err, "contract error code mismatch");
         }
-        other => panic!("expected contract error {:?}, got unexpected result variant", expected),
+        other => panic!(
+            "expected contract error {:?}, got unexpected result variant",
+            expected
+        ),
     }
 }

@@ -14,3 +14,7 @@ lcov.info
 # Soroban CLI wasm / identity artifacts
 *.wasm
 *.xdr
+
+# Transient PR drafting artifacts
+PR_DESCRIPTION.md
+PULL_REQUEST.md

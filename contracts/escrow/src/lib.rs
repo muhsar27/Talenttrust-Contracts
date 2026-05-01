@@ -9,9 +9,7 @@ pub use types::{
 };
 
 mod amount_validation;
-pub use amount_validation::{
-    safe_add_amounts, safe_subtract_amounts, AmountValidationError,
-};
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, AmountValidationError};
 
 mod ttl;
 pub use ttl::{
@@ -378,9 +376,8 @@ impl Escrow {
             .get::<_, EscrowContractData>(&key)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
 
-        contract.total_deposited =
-            safe_add_amounts(contract.total_deposited, amount)
-                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        contract.total_deposited = safe_add_amounts(contract.total_deposited, amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
 
         if contract.status == ContractStatus::Created {
             contract.status = ContractStatus::Funded;
@@ -416,17 +413,15 @@ impl Escrow {
         }
 
         let milestone_amount = contract.milestones.get(milestone_index).unwrap();
-        let available = contract.total_deposited
-            - contract.released_amount
-            - contract.refunded_amount;
+        let available =
+            contract.total_deposited - contract.released_amount - contract.refunded_amount;
         if available < milestone_amount {
             env.panic_with_error(EscrowError::InsufficientFunds);
         }
 
         env.storage().persistent().set(&released_key, &true);
-        contract.released_amount =
-            safe_add_amounts(contract.released_amount, milestone_amount)
-                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        contract.released_amount = safe_add_amounts(contract.released_amount, milestone_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
 
         // Check if all milestones released → Completed
         let all_released = (0..contract.milestones.len()).all(|i| {
@@ -439,14 +434,8 @@ impl Escrow {
             contract.status = ContractStatus::Completed;
             // Increment pending reputation credits
             let credits_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
-            let credits: u32 = env
-                .storage()
-                .persistent()
-                .get(&credits_key)
-                .unwrap_or(0);
-            env.storage()
-                .persistent()
-                .set(&credits_key, &(credits + 1));
+            let credits: u32 = env.storage().persistent().get(&credits_key).unwrap_or(0);
+            env.storage().persistent().set(&credits_key, &(credits + 1));
         }
 
         env.storage().persistent().set(&key, &contract);
@@ -517,9 +506,7 @@ impl Escrow {
         let credits_key = DataKey::PendingReputationCredits(freelancer.clone());
         let credits: u32 = env.storage().persistent().get(&credits_key).unwrap_or(0);
         if credits > 0 {
-            env.storage()
-                .persistent()
-                .set(&credits_key, &(credits - 1));
+            env.storage().persistent().set(&credits_key, &(credits - 1));
         }
 
         env.events().publish(
