@@ -1,7 +1,12 @@
 #![cfg(test)]
 
-use crate::{Escrow, EscrowClient, EscrowError, PendingClientMigration, PENDING_MIGRATION_TTL_LEDGERS, types::DepositMode};
-use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, testutils::LedgerInfo, vec, Address, Env};
+use crate::{
+    types::DepositMode, Escrow, EscrowClient, EscrowError, PendingClientMigration,
+    PENDING_MIGRATION_TTL_LEDGERS,
+};
+use soroban_sdk::{
+    testutils::Address as _, testutils::Ledger as _, testutils::LedgerInfo, vec, Address, Env,
+};
 
 use super::{assert_contract_error, default_milestones, register_client};
 

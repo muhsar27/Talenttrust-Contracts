@@ -1,5 +1,7 @@
-use crate::{ContractStatus, DataKey, Escrow, EscrowArgs, EscrowClient, EscrowContractData, EscrowError};
 use crate::ttl::{read_if_live, remove_transient, store_with_ttl, PENDING_MIGRATION_TTL_LEDGERS};
+use crate::{
+    ContractStatus, DataKey, Escrow, EscrowArgs, EscrowClient, EscrowContractData, EscrowError,
+};
 use soroban_sdk::{contractimpl, contracttype, Address, Env, Symbol};
 
 #[contracttype]
@@ -37,7 +39,8 @@ impl Escrow {
     }
 
     fn pending_migration_exists(env: &Env, contract_id: u32) -> bool {
-        read_if_live::<_, PendingClientMigration>(env, &Self::pending_migration_key(contract_id)).is_some()
+        read_if_live::<_, PendingClientMigration>(env, &Self::pending_migration_key(contract_id))
+            .is_some()
     }
 
     /// Propose a client migration for an existing contract.
@@ -108,7 +111,9 @@ impl Escrow {
         }
 
         contract.client = new_client.clone();
-        env.storage().persistent().set(&DataKey::Contract(contract_id), &contract);
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
         remove_transient(&env, &key);
 
         env.events().publish(
