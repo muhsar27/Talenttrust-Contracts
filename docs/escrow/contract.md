@@ -94,6 +94,7 @@ ReadinessChecklist {
 - Deposits funds into escrow.
 - Only the client can call this.
 - Updates contract status to Funded after success.
+- Emits a structured deposit event for every successful deposit.
 - Returns true if successful.
 
 ### release_milestone(env, contract_id, token, freelancer, amount) -> bool
@@ -197,8 +198,9 @@ Lifecycle operations covered:
 
 - `create_contract` -> operation `create`
 - `deposit_funds` -> operation `deposit`
+- `release_milestone` -> operation `released`
+- `protocol_fee` -> emitted on milestone release when protocol fees are active
 - `approve_milestone` -> operation `approve`
-- `release_milestone` -> operation `release`
 - `cancel_contract` -> operation `cancel`
 
 Breaking change note:

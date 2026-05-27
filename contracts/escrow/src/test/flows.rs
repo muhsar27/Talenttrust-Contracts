@@ -1,6 +1,6 @@
 use super::{complete_contract, default_milestones, register_client, total_milestone_amount};
-use crate::EscrowError;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use crate::{EscrowError, types::DataKey};
+use soroban_sdk::{symbol_short, testutils::Address as _, Address, Env};
 
 #[test]
 fn multiple_contracts_for_same_freelancer() {
@@ -55,4 +55,35 @@ fn scenario_reputation_invalid_rating_six_fails() {
 
     let result = client.try_issue_reputation(&contract_id, &6, &None);
     super::assert_contract_error(result, EscrowError::InvalidRating);
+}
+
+#[test]
+fn deposit_funds_emits_structured_deposit_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (_, _, contract_id) = create_contract(&env, &client);
+
+    assert!(client.deposit_funds(&contract_id, &total_milestone_amount()));
+
+    let events = env.events().all();
+    assert!(events.iter().any(|event| event.0 == symbol_short!("deposit")));
+}
+
+#[test]
+fn release_milestone_emits_protocol_fee_event_when_fees_active() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (_, _, contract_id) = create_contract(&env, &client);
+
+    assert!(client.deposit_funds(&contract_id, &total_milestone_amount()));
+    env.storage()
+        .persistent()
+        .set(&DataKey::ProtocolFeeBps, &100u32);
+
+    assert!(client.release_milestone(&contract_id, &0));
+
+    let events = env.events().all();
+    assert!(events.iter().any(|event| event.0 == symbol_short!("protocol_fee")));
 }

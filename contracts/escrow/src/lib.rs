@@ -256,6 +256,61 @@ impl Escrow {
         );
     }
 
+    /// Emit a structured deposit event for indexer reconstruction.
+    fn emit_deposit_event(
+        env: &Env,
+        contract_id: u32,
+        amount: i128,
+        total_deposited: i128,
+        status: ContractStatus,
+    ) {
+        env.events().publish(
+            (symbol_short!("deposit"), contract_id),
+            (amount, total_deposited, status as u32, env.ledger().timestamp()),
+        );
+    }
+
+    fn protocol_fee_bps(env: &Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<_, u32>(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0)
+    }
+
+    fn emit_protocol_fee_event(
+        env: &Env,
+        contract_id: u32,
+        milestone_index: u32,
+        fee: i128,
+        net: i128,
+    ) {
+        env.events().publish(
+            (symbol_short!("protocol_fee"), contract_id, milestone_index),
+            (fee, net, env.ledger().timestamp()),
+        );
+    }
+
+    fn maybe_emit_protocol_fee_event(
+        env: &Env,
+        contract_id: u32,
+        milestone_index: u32,
+        milestone_amount: i128,
+    ) {
+        let fee_bps = Self::protocol_fee_bps(env);
+        if fee_bps == 0 {
+            return;
+        }
+        let fee = milestone_amount
+            .checked_mul(fee_bps as i128)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
+            .checked_add(9999)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
+            / 10_000;
+        let net = safe_subtract_amounts(milestone_amount, fee)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        Self::emit_protocol_fee_event(env, contract_id, milestone_index, fee, net);
+    }
+
     // ─── Accounting invariants ───────────────────────────────────────────
 
     /// Validate the core accounting invariant:
@@ -551,6 +606,14 @@ impl Escrow {
             );
         }
 
+        Self::emit_deposit_event(
+            &env,
+            contract_id,
+            amount,
+            contract.total_deposited,
+            contract.status,
+        );
+
         true
     }
 
@@ -651,6 +714,13 @@ impl Escrow {
         env.events().publish(
             (symbol_short!("released"), contract_id, milestone_index),
             (milestone_amount, env.ledger().timestamp()),
+        );
+
+        Self::maybe_emit_protocol_fee_event(
+            &env,
+            contract_id,
+            milestone_index,
+            milestone_amount,
         );
         true
     }
