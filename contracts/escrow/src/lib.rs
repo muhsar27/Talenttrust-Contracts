@@ -30,14 +30,15 @@ use soroban_sdk::{contract, contractimpl, symbol_short, Address, Env, Symbol, Ve
 
 mod types;
 pub use types::{
-    ContractStatus, ContractSummary, DataKey, DepositMode, EscrowError, Milestone,
-    MilestoneSummary, ReadinessChecklist, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    ContractStatus, ContractSummary, DataKey, DepositMode, EscrowError, GovernedParameters,
+    Milestone, MilestoneSummary, ReadinessChecklist, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 mod amount_validation;
 pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, AmountValidationError};
 
 mod ttl;
+mod governance;
 pub use ttl::{
     LEDGERS_PER_DAY, PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS,
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,

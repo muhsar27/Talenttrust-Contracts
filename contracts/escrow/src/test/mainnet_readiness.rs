@@ -59,35 +59,64 @@ fn initialize_sets_initialized_to_true() {
 }
 
 // ── 4.3 ─────────────────────────────────────────────────────────────────────
-// After `initialize_protocol_governance`, `governed_params_set` is true.
+// After `set_governed_params`, `governed_params_set` is true.
 #[test]
-fn initialize_protocol_governance_sets_governed_params() {
+fn set_governed_params_sets_governed_params() {
     let (env, contract_id) = setup();
     let client = EscrowClient::new(&env, &contract_id);
     let admin = Address::generate(&env);
 
-    client.initialize_protocol_governance(&admin, &10_i128, &4_u32, &1_i128, &5_i128);
+    client.initialize(&admin);
+    assert!(client.set_governed_params(&admin, &1000_u32, &500_000_000_000_i128));
 
     let info = client.get_mainnet_readiness_info();
     assert!(
         info.governed_params_set,
-        "governed_params_set must be true after initialize_protocol_governance()"
+        "governed_params_set must be true after set_governed_params()"
     );
+
+    let params = client.get_governed_parameters().unwrap();
+    assert_eq!(params.protocol_fee_bps, 1000);
+    assert_eq!(params.max_escrow_total_stroops, 500_000_000_000_i128);
 }
 
 // ── 4.4 ─────────────────────────────────────────────────────────────────────
-// `update_protocol_parameters` also sets `governed_params_set` to true.
+// `set_governed_params` can be called only by the admin and leaves the checklist
+// unchanged on failure.
 #[test]
-fn update_protocol_parameters_sets_governed_params() {
+fn unauthorized_set_governed_params_does_not_set_flag() {
     let (env, contract_id) = setup();
     let client = EscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+    let fake_admin = Address::generate(&env);
 
-    client.update_protocol_parameters(&50_i128, &8_u32, &1_i128, &5_i128);
+    client.initialize(&admin);
+
+    let result = client.try_set_governed_params(&fake_admin, &1000_u32, &500_000_000_000_i128);
+    super::assert_contract_error(result, EscrowError::UnauthorizedRole);
 
     let info = client.get_mainnet_readiness_info();
     assert!(
-        info.governed_params_set,
-        "governed_params_set must be true after update_protocol_parameters()"
+        !info.governed_params_set,
+        "governed_params_set must remain false after an unauthorized set_governed_params()"
+    );
+}
+
+#[test]
+fn invalid_set_governed_params_does_not_set_flag() {
+    let (env, contract_id) = setup();
+    let client = EscrowClient::new(&env, &contract_id);
+    let admin = Address::generate(&env);
+
+    client.initialize(&admin);
+
+    let result = client.try_set_governed_params(&admin, &20_000_u32, &500_000_000_000_i128);
+    super::assert_contract_error(result, EscrowError::InvalidProtocolParameters);
+
+    let info = client.get_mainnet_readiness_info();
+    assert!(
+        !info.governed_params_set,
+        "governed_params_set must remain false after an invalid set_governed_params()"
     );
 }
 
@@ -172,7 +201,7 @@ fn get_mainnet_readiness_info_is_idempotent() {
 
     // Apply some lifecycle ops to create non-trivial state.
     client.initialize(&admin);
-    client.initialize_protocol_governance(&admin, &10_i128, &4_u32, &1_i128, &5_i128);
+    client.set_governed_params(&admin, &1000_u32, &500_000_000_000_i128);
 
     let first = client.get_mainnet_readiness_info();
     let second = client.get_mainnet_readiness_info();

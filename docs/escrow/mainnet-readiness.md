@@ -22,7 +22,7 @@ pub fn get_mainnet_readiness_info(env: Env) -> MainnetReadinessInfo
 | Field | Type | Meaning | Set by |
 |---|---|---|---|
 | `caps_set` | `bool` | `true` when `MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS > 0`. Derived inline from the compile-time constant — always `true` in any deployed build that has the constant defined. | Compile-time constant (not persisted) |
-| `governed_params_set` | `bool` | `true` once protocol governance parameters have been configured on-chain. | `initialize_protocol_governance` or `update_protocol_parameters` |
+| `governed_params_set` | `bool` | `true` once protocol governance parameters have been configured on-chain. | `set_governed_params` |
 | `emergency_controls_enabled` | `bool` | `true` once the emergency control mechanism has been exercised at least once (pause or resolve). | `activate_emergency_pause` or `resolve_emergency` |
 | `initialized` | `bool` | `true` once the contract has been initialized via `initialize`. | `initialize` |
 | `protocol_version` | `u32` | Always equals the `MAINNET_PROTOCOL_VERSION` compile-time constant (currently `1`). | Compile-time constant (not persisted) |
@@ -31,7 +31,7 @@ pub fn get_mainnet_readiness_info(env: Env) -> MainnetReadinessInfo
 ### Field lifecycle details
 
 - **`caps_set`** — computed as `MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS > 0` every time the view function is called. It is never stored in the `ReadinessChecklist`; it reflects the WASM binary itself.
-- **`governed_params_set`** — persisted in instance storage. Set to `true` atomically within the same transaction as a successful `initialize_protocol_governance` or `update_protocol_parameters` call. Once `true`, it stays `true` (governance parameters can be updated again, but the flag is never reset to `false`).
+- **`governed_params_set`** — persisted in instance storage. Set to `true` atomically within the same transaction as a successful `set_governed_params` call. Once `true`, it stays `true` (governance parameters can be updated again, but the flag is never reset to `false`).
 - **`emergency_controls_enabled`** — persisted in instance storage. Set to `true` atomically within the same transaction as a successful `activate_emergency_pause` or `resolve_emergency` call. Indicates the emergency control path has been validated end-to-end.
 - **`initialized`** — persisted in instance storage. Set to `true` atomically within the same transaction as a successful `initialize` call. The `initialize` function panics on a second call, so this flag is set exactly once.
 - **`protocol_version`** — read directly from the `MAINNET_PROTOCOL_VERSION` constant at call time. Not affected by storage state.
@@ -74,7 +74,7 @@ A freshly deployed contract with no lifecycle operations completed returns:
 Before directing production traffic to a contract instance, verify all of the following conditions using `get_mainnet_readiness_info`:
 
 1. **`caps_set` must be `true`** — confirms the WASM binary was compiled with a non-zero escrow cap. If `false`, the binary is misconfigured and must not be used.
-2. **`governed_params_set` must be `true`** — confirms that `initialize_protocol_governance` (or `update_protocol_parameters`) has been called and protocol parameters are active on-chain.
+2. **`governed_params_set` must be `true`** — confirms that `set_governed_params` has been called and protocol parameters are active on-chain.
 3. **`emergency_controls_enabled` must be `true`** — confirms the emergency pause/resolve path has been exercised at least once, validating that the admin key can operate the emergency controls.
 4. **`initialized` must be `true`** — confirms `initialize` has been called and the contract admin is set.
 5. **`protocol_version` must match the expected version** — compare against the version your deployment tooling expects (currently `1`). A mismatch indicates a WASM version mismatch.
@@ -115,7 +115,7 @@ It is safe to call from preflight scripts, CI pipelines, monitoring dashboards, 
 | Mechanism | What it does |
 |-----------|--------------|
 | `MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS` | Hard cap on the sum of milestone amounts per escrow. Not changeable via governance; requires a WASM upgrade to adjust. Reflected in `max_escrow_total_stroops`. |
-| `ProtocolParameters` | Governed limits: minimum milestone size, maximum milestone count, reputation rating bounds. Configured via `initialize_protocol_governance` and `update_protocol_parameters`. Reflected in `governed_params_set`. |
+| `GovernedParameters` | Governed limits: protocol fee and maximum escrow cap. Configured via `set_governed_params`. Reflected in `governed_params_set`. |
 
 ---
 

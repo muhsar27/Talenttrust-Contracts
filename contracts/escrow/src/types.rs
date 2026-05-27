@@ -22,6 +22,7 @@ pub enum DataKey {
     // Protocol / governance
     ProtocolFeeBps,
     AccumulatedProtocolFees,
+    GovernedParameters,
     ReadinessChecklist,
 }
 
@@ -74,6 +75,7 @@ pub enum EscrowError {
     ExactDepositRequired = 41,
     DepositWouldExceedTotal = 42,
     AccountingInvariantViolated = 43,
+    InvalidProtocolParameters = 44,
 }
 
 #[contracttype]
@@ -120,6 +122,13 @@ impl Default for ReadinessChecklist {
             emergency_controls_enabled: false,
         }
     }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernedParameters {
+    pub protocol_fee_bps: u32,
+    pub max_escrow_total_stroops: i128,
 }
 
 // ─── Indexer summary types ────────────────────────────────────────────────────
