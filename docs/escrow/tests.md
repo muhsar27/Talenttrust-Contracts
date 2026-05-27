@@ -92,6 +92,18 @@ Tests are located in [`contracts/escrow/src/test.rs`](../../contracts/escrow/src
 - **Assertion:** Second release panics with `"milestone already released"`.
 - **Importance:** Double-release prevention.
 
+#### `rejects_double_release_and_completes_contract`
+- **Purpose:** Verify duplicate milestone release is rejected with `AlreadyReleased` and that releasing the remaining milestones still transitions the contract to `Completed` while incrementing pending reputation credits.
+- **Setup:** Create client-only contract, fund, release milestone 0, retry release 0, then release milestones 1 and 2.
+- **Assertion:** Duplicate release fails; contract becomes `Completed` and pending reputation credits increase by 1 after all releases.
+- **Importance:** Confirms release flags drive complete-state transition and reputation credit accounting.
+
+#### `rejects_refund_after_release_and_release_after_refund`
+- **Purpose:** Verify refund/release exclusivity: refunded milestones cannot be released and released milestones cannot be refunded.
+- **Setup:** Create contract, fund, release milestone 0, attempt to refund it, refund milestone 1, then attempt to release milestone 1.
+- **Assertion:** Refund of released milestone fails with `AlreadyReleased`; release of refunded milestone fails with `Refunded`.
+- **Importance:** Proves per-milestone release/refund flags are mutually exclusive and preserve fund safety.
+
 #### `test_release_out_of_range_milestone_panics`
 - **Purpose:** Verify out-of-range index is rejected.
 - **Setup:** Create contract with 1 milestone, try to release milestone 99.
