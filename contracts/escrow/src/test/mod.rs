@@ -6,6 +6,7 @@ use crate::{Escrow, EscrowClient, EscrowError};
 
 // ─── Submodules ───────────────────────────────────────────────────────────────
 
+mod admin_auth_helper;
 mod dispute;
 mod emergency_controls;
 mod pause_controls;
@@ -68,9 +69,9 @@ pub fn create_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u
 pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) {
     let (client_addr, freelancer_addr, id) = create_contract(env, client);
     assert!(client.deposit_funds(&id, &total_milestone_amount()));
-    assert!(client.release_milestone(&id, &client_addr, &0));
-    assert!(client.release_milestone(&id, &client_addr, &1));
-    assert!(client.release_milestone(&id, &client_addr, &2));
+    assert!(client.release_milestone(&id, &0));
+    assert!(client.release_milestone(&id, &1));
+    assert!(client.release_milestone(&id, &2));
     (client_addr, freelancer_addr, id)
 }
 

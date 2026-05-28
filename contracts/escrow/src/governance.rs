@@ -39,7 +39,7 @@ impl super::Escrow {
         // Emit audit-style event for protocol fee change. Topic uses the
         // short symbol to remain consistent with other contract events.
         env.events().publish(
-            (symbol_short!("protocol_fee_bps"),),
+            (Symbol::new(&env, "protocol_fee_bps"),),
             (old_bps, new_bps, admin.clone(), env.ledger().timestamp()),
         );
         true

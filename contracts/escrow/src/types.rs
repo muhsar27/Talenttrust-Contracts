@@ -73,16 +73,17 @@ pub enum EscrowError {
     // Additional errors referenced in tests
     FreelancerMismatch = 35,
     EmptyRefundRequest = 36,
-    DuplicateMilestoneInRefund = 35,
-    PotentialOverflow = 36,
-    NonPositiveAmount = 37,
-    AmountExceedsMaximum = 38,
-    InvalidStroopPrecision = 39,
-    ExceedsContractMaximum = 40,
-    ExactDepositRequired = 41,
-    DepositWouldExceedTotal = 42,
-    AccountingInvariantViolated = 43,
-    InvalidProtocolParameters = 44,
+    DuplicateMilestoneInRefund = 37,
+    PotentialOverflow = 38,
+    NonPositiveAmount = 39,
+    AmountExceedsMaximum = 40,
+    InvalidStroopPrecision = 41,
+    ExceedsContractMaximum = 42,
+    ExactDepositRequired = 43,
+    DepositWouldExceedTotal = 44,
+    AccountingInvariantViolated = 45,
+    ArbiterRequired = 46,
+    InvalidDisputeSplit = 47,
 }
 
 #[contracttype]

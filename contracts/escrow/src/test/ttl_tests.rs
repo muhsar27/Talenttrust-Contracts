@@ -6,7 +6,7 @@
 
 #![cfg(test)]
 
-use soroban_sdk::{testutils::Ledger as _, symbol_short, Env, Symbol};
+use soroban_sdk::{symbol_short, testutils::Ledger as _, Env, Symbol};
 
 use crate::{
     ttl::{
@@ -79,7 +79,7 @@ fn compute_expiry_saturates_on_overflow() {
     let (env, id) = setup();
     env.as_contract(&id, || {
         let seq = env.ledger().sequence(); // 1_000
-        // saturating_add(u32::MAX) from any non-zero sequence == u32::MAX
+                                           // saturating_add(u32::MAX) from any non-zero sequence == u32::MAX
         assert_eq!(compute_expiry(&env, u32::MAX - seq), u32::MAX);
         // One more would overflow without saturation; with it we stay at u32::MAX.
         assert_eq!(compute_expiry(&env, u32::MAX), u32::MAX);
@@ -304,10 +304,12 @@ fn expiry_is_deterministic_across_independent_envs() {
     let (env_a, id_a) = setup();
     let (env_b, id_b) = setup();
 
-    let expiry_a =
-        env_a.as_contract(&id_a, || compute_expiry(&env_a, PENDING_APPROVAL_TTL_LEDGERS));
-    let expiry_b =
-        env_b.as_contract(&id_b, || compute_expiry(&env_b, PENDING_APPROVAL_TTL_LEDGERS));
+    let expiry_a = env_a.as_contract(&id_a, || {
+        compute_expiry(&env_a, PENDING_APPROVAL_TTL_LEDGERS)
+    });
+    let expiry_b = env_b.as_contract(&id_b, || {
+        compute_expiry(&env_b, PENDING_APPROVAL_TTL_LEDGERS)
+    });
 
     assert_eq!(
         expiry_a, expiry_b,

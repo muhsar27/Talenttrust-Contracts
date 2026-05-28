@@ -40,13 +40,10 @@ pub use amount_validation::{safe_add_amounts, safe_subtract_amounts, AmountValid
 mod governance;
 
 mod ttl;
-mod governance;
 pub use ttl::{
     LEDGERS_PER_DAY, PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS,
     PENDING_MIGRATION_BUMP_THRESHOLD, PENDING_MIGRATION_TTL_LEDGERS,
 };
-
-mod governance;
 
 // ─── Bounds constants ─────────────────────────────────────────────────────────
 
@@ -223,17 +220,23 @@ impl Escrow {
         }
     }
 
-    /// Panics with `UnauthorizedRole` if `caller` is not the stored admin.
-    #[allow(dead_code)] // retained for future admin-gated operations
-    fn require_admin(env: &Env, caller: &Address) {
+    /// Load the stored admin address, panic with `NotInitialized` if absent,
+    /// and call `require_auth()` so that the Soroban auth engine records the
+    /// authorization requirement.  Returns the authenticated admin `Address`.
+    ///
+    /// # Panics
+    /// - `NotInitialized` – no admin has been stored yet (i.e., `initialize`
+    ///   was never called or the storage entry is missing).
+    /// - Soroban auth failure – the admin's signature is not present in the
+    ///   current invocation's authorization context.
+    fn load_and_auth_admin(env: &Env) -> Address {
         let admin: Address = env
             .storage()
             .persistent()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-        if *caller != admin {
-            env.panic_with_error(EscrowError::UnauthorizedRole);
-        }
+        admin.require_auth();
+        admin
     }
 
     // ─── Audit event helper ───────────────────────────────────────────────
@@ -287,7 +290,7 @@ impl Escrow {
         net: i128,
     ) {
         env.events().publish(
-            (symbol_short!("protocol_fee"), contract_id, milestone_index),
+            (Symbol::new(env, "protocol_fee"), contract_id, milestone_index),
             (fee, net, env.ledger().timestamp()),
         );
     }
@@ -371,12 +374,7 @@ impl Escrow {
     /// Pause all mutating operations. Admin only.
     pub fn pause(env: Env) -> bool {
         Self::require_initialized(&env);
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-        admin.require_auth();
+        let admin = Self::load_and_auth_admin(&env);
         env.storage().persistent().set(&DataKey::Paused, &true);
         env.events().publish(
             (symbol_short!("paused"), env.ledger().timestamp()),
@@ -397,12 +395,7 @@ impl Escrow {
         {
             env.panic_with_error(EscrowError::EmergencyActive);
         }
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-        admin.require_auth();
+        let admin = Self::load_and_auth_admin(&env);
         env.storage().persistent().set(&DataKey::Paused, &false);
         env.events().publish(
             (symbol_short!("unpaused"), env.ledger().timestamp()),
@@ -424,12 +417,7 @@ impl Escrow {
     /// Activate emergency pause. Sets both `Paused` and `Emergency` flags. Admin only.
     pub fn activate_emergency_pause(env: Env) -> bool {
         Self::require_initialized(&env);
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-        admin.require_auth();
+        let admin = Self::load_and_auth_admin(&env);
         env.storage().persistent().set(&DataKey::Paused, &true);
         env.storage().persistent().set(&DataKey::Emergency, &true);
 
@@ -450,12 +438,7 @@ impl Escrow {
     /// Resolve emergency and clear both flags. Admin only.
     pub fn resolve_emergency(env: Env) -> bool {
         Self::require_initialized(&env);
-        let admin: Address = env
-            .storage()
-            .persistent()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
-        admin.require_auth();
+        let admin = Self::load_and_auth_admin(&env);
         env.storage().persistent().set(&DataKey::Emergency, &false);
         env.storage().persistent().set(&DataKey::Paused, &false);
 
@@ -627,7 +610,6 @@ impl Escrow {
     /// arbiter authorization until the release authorization entrypoint lands.
     pub fn release_milestone(env: Env, contract_id: u32, milestone_index: u32) -> bool {
         Self::require_not_paused(&env);
-        caller.require_auth();
 
         let key = DataKey::Contract(contract_id);
         let mut contract = env
@@ -1005,9 +987,6 @@ impl Escrow {
 mod proptest;
 #[cfg(test)]
 mod simple_amount_test;
-
-#[cfg(test)]
-mod proptest;
 
 #[cfg(test)]
 mod test;

@@ -29,8 +29,8 @@ fn setup_funded_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// Create a completed contract ready for reputation issuance.
 fn setup_completed_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u32) {
     let (client_addr, freelancer_addr, id) = setup_funded_contract(env, client);
-    client.release_milestone(&id, &client_addr, &0);
-    client.release_milestone(&id, &client_addr, &1);
+    client.release_milestone(&id, &0);
+    client.release_milestone(&id, &1);
     (client_addr, freelancer_addr, id)
 }
 
@@ -111,11 +111,11 @@ fn pause_blocks_deposit_funds() {
 fn pause_blocks_release_milestone() {
     let (env, contract_id, _admin) = setup_initialized();
     let client = EscrowClient::new(&env, &contract_id);
-    let (client_addr, _, id) = setup_funded_contract(&env, &client);
+    let (_, _, id) = setup_funded_contract(&env, &client);
     client.pause();
 
     super::assert_contract_error(
-        client.try_release_milestone(&id, &client_addr, &0),
+        client.try_release_milestone(&id, &0),
         EscrowError::ContractPaused,
     );
 }
