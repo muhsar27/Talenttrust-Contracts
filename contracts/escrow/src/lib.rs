@@ -84,6 +84,9 @@ impl Escrow {
             .get::<_, u32>(&DataKey::NextContractId)
             .unwrap_or(1);
 
+        // Extend TTL for NextContractId counter on read
+        ttl::extend_next_contract_id_ttl(&env);
+
         // Store contract metadata
         let contract = Contract {
             client: client.clone(),
@@ -118,6 +121,10 @@ impl Escrow {
             .persistent()
             .set(&DataKey::NextContractId, &(id + 1));
 
+        // Extend TTL for newly created contract, milestones, and updated counter
+        ttl::extend_contract_and_milestones_ttl(&env, id);
+        ttl::extend_next_contract_id_ttl(&env);
+
         id
     }
 
@@ -147,6 +154,9 @@ impl Escrow {
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
+        // Extend TTL on contract read
+        ttl::extend_contract_ttl(&env, contract_id);
+
         // Only client can deposit
         if caller != contract.client {
             env.panic_with_error(Error::UnauthorizedRole);
@@ -169,6 +179,9 @@ impl Escrow {
             .get(&(DataKey::Contract(contract_id), milestone_key))
             .unwrap();
 
+        // Extend TTL on milestone read
+        ttl::extend_milestone_ttl(&env, contract_id);
+
         let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
         // Transition to Funded if fully funded
@@ -179,6 +192,9 @@ impl Escrow {
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
+
+        // Extend TTL on contract write
+        ttl::extend_contract_ttl(&env, contract_id);
 
         true
     }
@@ -260,6 +276,9 @@ impl Escrow {
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
+        // Extend TTL on contract read
+        ttl::extend_contract_ttl(&env, contract_id);
+
         // Verify contract is in Funded state
         if contract.status != ContractStatus::Funded {
             env.panic_with_error(Error::InvalidState);
@@ -305,6 +324,9 @@ impl Escrow {
             .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
             .unwrap();
 
+        // Extend TTL on milestone read
+        ttl::extend_milestone_ttl(&env, contract_id);
+
         if milestone_index >= milestones.len() {
             env.panic_with_error(Error::IndexOutOfBounds);
         }
@@ -345,6 +367,9 @@ impl Escrow {
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
+
+        // Extend TTL on contract and milestone writes
+        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
 
         true
     }
@@ -392,6 +417,9 @@ impl Escrow {
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
+        // Extend TTL on contract read
+        ttl::extend_contract_ttl(&env, contract_id);
+
         contract.client.require_auth();
 
         let milestone_key = Symbol::new(&env, "milestones");
@@ -400,6 +428,9 @@ impl Escrow {
             .persistent()
             .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
             .unwrap();
+
+        // Extend TTL on milestone read
+        ttl::extend_milestone_ttl(&env, contract_id);
 
         let mut total_refund_amount: i128 = 0;
 
@@ -457,6 +488,9 @@ impl Escrow {
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
 
+        // Extend TTL on contract and milestone writes
+        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
+
         total_refund_amount
     }
 
@@ -472,10 +506,16 @@ impl Escrow {
     /// # Errors
     /// * `ContractNotFound` - If contract doesn't exist
     pub fn get_contract(env: Env, contract_id: u32) -> Contract {
-        env.storage()
+        let contract = env
+            .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+        
+        // Extend TTL on contract read
+        ttl::extend_contract_ttl(&env, contract_id);
+        
+        contract
     }
 
     /// Retrieves all milestones for a contract.
@@ -491,10 +531,16 @@ impl Escrow {
     /// * `ContractNotFound` - If contract doesn't exist
     pub fn get_milestones(env: Env, contract_id: u32) -> Vec<Milestone> {
         let milestone_key = Symbol::new(&env, "milestones");
-        env.storage()
+        let milestones = env
+            .storage()
             .persistent()
             .get(&(DataKey::Contract(contract_id), milestone_key))
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+        
+        // Extend TTL on milestone read
+        ttl::extend_milestone_ttl(&env, contract_id);
+        
+        milestones
     }
 
     /// Calculates the refundable balance (funded but not released or refunded).
@@ -514,6 +560,9 @@ impl Escrow {
             .persistent()
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        // Extend TTL on contract read
+        ttl::extend_contract_ttl(&env, contract_id);
 
         contract.funded_amount - contract.released_amount - contract.refunded_amount
     }

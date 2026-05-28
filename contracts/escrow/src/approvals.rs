@@ -1,4 +1,4 @@
-use crate::ttl::{PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS};
+use crate::ttl::{self, PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS};
 use crate::types::{Contract, ContractStatus, DataKey, Error, MilestoneApprovals, Milestone, ReleaseAuthorization};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
@@ -45,6 +45,9 @@ pub fn approve_milestone(
         .get(&DataKey::Contract(contract_id))
         .ok_or(Error::ContractNotFound)?;
 
+    // Extend TTL on contract read
+    ttl::extend_contract_ttl(env, contract_id);
+
     // Verify contract is in Funded state
     if contract.status != ContractStatus::Funded {
         return Err(Error::InvalidState);
@@ -57,6 +60,9 @@ pub fn approve_milestone(
         .persistent()
         .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
         .ok_or(Error::ContractNotFound)?;
+
+    // Extend TTL on milestone read
+    ttl::extend_milestone_ttl(env, contract_id);
 
     // Validate milestone index
     if milestone_index >= milestones.len() {
