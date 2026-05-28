@@ -2,7 +2,7 @@
 
 use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env, Vec};
 
-use crate::{Contract, ContractStatus, Escrow, EscrowClient, Milestone};
+use crate::{Contract, ContractStatus, Escrow, EscrowClient, Milestone, ReleaseAuthorization};
 
 // Test helper functions
 pub fn setup() -> (Env, Address, Address) {
@@ -11,6 +11,37 @@ pub fn setup() -> (Env, Address, Address) {
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     (env, client_addr, freelancer_addr)
+}
+
+pub fn setup_env() -> Env {
+    let env = Env::default();
+    env.mock_all_auths();
+    env
+}
+
+pub fn register_escrow(env: &Env) -> EscrowClient {
+    let contract_id = env.register(Escrow, ());
+    EscrowClient::new(env, &contract_id)
+}
+
+pub fn register_client(env: &Env) -> EscrowClient {
+    let contract_id = env.register(Escrow, ());
+    EscrowClient::new(env, &contract_id)
+}
+
+pub fn generated_participants(env: &Env) -> (Address, Address, Address) {
+    let client_addr = Address::generate(env);
+    let freelancer_addr = Address::generate(env);
+    let arbiter_addr = Address::generate(env);
+    (client_addr, freelancer_addr, arbiter_addr)
+}
+
+pub fn default_milestones(env: &Env) -> Vec<i128> {
+    vec![env, 1000_0000000_i128, 2000_0000000_i128, 3000_0000000_i128]
+}
+
+pub fn total_milestones() -> i128 {
+    6000_0000000_i128
 }
 
 pub fn create_client(env: &Env) -> EscrowClient {
@@ -25,7 +56,13 @@ pub fn create_default_contract(
     freelancer_addr: &Address,
 ) -> u32 {
     let milestones = vec![env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
-    client.create_contract(client_addr, freelancer_addr, &milestones)
+    client.create_contract(
+        client_addr,
+        freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    )
 }
 
 pub fn assert_contract_state(
@@ -73,7 +110,13 @@ fn test_create_contract() {
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 200_0000000_i128, 400_0000000_i128, 600_0000000_i128];
 
-    let id = client.create_contract(&client_addr, &freelancer_addr, &milestones);
+    let id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &ReleaseAuthorization::ClientOnly,
+    );
     assert_eq!(id, 1);
 }
 
@@ -83,7 +126,7 @@ fn test_deposit_funds() {
     let client = create_client(&env);
     let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
 
-    let result = client.deposit_funds(&contract_id, &1_000_0000000);
+    let result = client.deposit_funds(&contract_id, &client_addr, &1_000_0000000);
     assert!(result);
 }
 
@@ -93,8 +136,9 @@ fn test_release_milestone() {
     let client = create_client(&env);
     let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
 
-    assert!(client.deposit_funds(&contract_id, &1_200_0000000_i128));
-    let result = client.release_milestone(&contract_id, &0);
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    let result = client.release_milestone(&contract_id, &client_addr, &0);
     assert!(result);
 }
 
@@ -103,3 +147,21 @@ mod refund;
 mod release;
 mod deposit;
 mod create_contract;
+mod access_control;
+mod approval_expiry;
+mod hello;
+mod lifecycle;
+mod flows;
+mod security;
+mod storage;
+mod persistence;
+mod performance;
+mod input_sanitization_amounts;
+mod input_sanitization_identities;
+mod milestone_schedule;
+mod governance;
+mod emergency_controls;
+mod pause_controls;
+mod timeout_tests;
+mod mainnet_readiness;
+mod client_migration;

@@ -1,5 +1,5 @@
 use super::{default_milestones, generated_participants, register_client, total_milestones};
-use crate::{EscrowError, ReleaseAuthorization};
+use crate::{Error, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, Env};
 
 #[test]
@@ -19,7 +19,7 @@ fn test_only_client_can_deposit_funds() {
     );
 
     let result = client.try_deposit_funds(&contract_id, &freelancer_addr, &total_milestones());
-    assert_eq!(result, Err(Ok(EscrowError::UnauthorizedRole)));
+    assert_eq!(result, Err(Ok(Error::UnauthorizedRole)));
 }
 
 #[test]
@@ -41,7 +41,7 @@ fn test_freelancer_cannot_approve_milestone_release() {
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestones()));
 
     let result = client.try_approve_milestone_release(&contract_id, &freelancer_addr, &0);
-    assert_eq!(result, Err(Ok(EscrowError::UnauthorizedRole)));
+    assert_eq!(result, Err(Ok(Error::UnauthorizedRole)));
 }
 
 #[test]
@@ -64,7 +64,7 @@ fn test_freelancer_cannot_release_milestone() {
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
 
     let result = client.try_release_milestone(&contract_id, &freelancer_addr, &0);
-    assert_eq!(result, Err(Ok(EscrowError::UnauthorizedRole)));
+    assert_eq!(result, Err(Ok(Error::UnauthorizedRole)));
 }
 
 #[test]
@@ -92,7 +92,7 @@ fn test_only_client_can_issue_reputation() {
     assert!(client.release_milestone(&contract_id, &client_addr, &2));
 
     let result = client.try_issue_reputation(&contract_id, &freelancer_addr, &freelancer_addr, &5);
-    assert_eq!(result, Err(Ok(EscrowError::UnauthorizedRole)));
+    assert_eq!(result, Err(Ok(Error::UnauthorizedRole)));
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn test_issue_reputation_rejects_freelancer_mismatch() {
     assert!(client.release_milestone(&contract_id, &client_addr, &2));
 
     let result = client.try_issue_reputation(&contract_id, &client_addr, &wrong_freelancer, &5);
-    assert_eq!(result, Err(Ok(EscrowError::FreelancerMismatch)));
+    assert_eq!(result, Err(Ok(Error::FreelancerMismatch)));
 }
 
 #[test]
@@ -139,7 +139,7 @@ fn test_create_rejects_arbiter_modes_without_arbiter() {
         &default_milestones(&env),
         &ReleaseAuthorization::ArbiterOnly,
     );
-    assert_eq!(result, Err(Ok(EscrowError::MissingArbiter)));
+    assert_eq!(result, Err(Ok(Error::MissingArbiter)));
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn test_create_rejects_invalid_arbiter_role_overlap() {
         &default_milestones(&env),
         &ReleaseAuthorization::ClientAndArbiter,
     );
-    assert_eq!(result, Err(Ok(EscrowError::InvalidArbiter)));
+    assert_eq!(result, Err(Ok(Error::InvalidArbiter)));
 }
 
 #[test]
@@ -191,7 +191,7 @@ fn test_create_rejects_same_client_and_freelancer() {
         &default_milestones(&env),
         &ReleaseAuthorization::ClientOnly,
     );
-    assert_eq!(result, Err(Ok(EscrowError::InvalidParticipants)));
+    assert_eq!(result, Err(Ok(Error::InvalidParticipants)));
 }
 
 #[test]
@@ -209,7 +209,7 @@ fn test_create_rejects_empty_milestones() {
         &empty,
         &ReleaseAuthorization::ClientOnly,
     );
-    assert_eq!(result, Err(Ok(EscrowError::EmptyMilestones)));
+    assert_eq!(result, Err(Ok(Error::EmptyMilestones)));
 }
 
 #[test]
@@ -228,7 +228,7 @@ fn test_deposit_rejects_non_positive_amount() {
     );
 
     let result = client.try_deposit_funds(&contract_id, &client_addr, &0);
-    assert_eq!(result, Err(Ok(EscrowError::AmountMustBePositive)));
+    assert_eq!(result, Err(Ok(Error::AmountMustBePositive)));
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn test_deposit_rejects_when_contract_not_created() {
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestones()));
     let result = client.try_deposit_funds(&contract_id, &client_addr, &total_milestones());
-    assert_eq!(result, Err(Ok(EscrowError::InvalidState)));
+    assert_eq!(result, Err(Ok(Error::InvalidState)));
 }
 
 #[test]
@@ -267,7 +267,7 @@ fn test_approve_requires_funded_state() {
     );
 
     let result = client.try_approve_milestone_release(&contract_id, &client_addr, &0);
-    assert_eq!(result, Err(Ok(EscrowError::InvalidState)));
+    assert_eq!(result, Err(Ok(Error::InvalidState)));
 }
 
 #[test]
@@ -290,7 +290,7 @@ fn test_approve_rejects_already_released_milestone() {
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
 
     let result = client.try_approve_milestone_release(&contract_id, &client_addr, &0);
-    assert_eq!(result, Err(Ok(EscrowError::MilestoneAlreadyReleased)));
+    assert_eq!(result, Err(Ok(Error::MilestoneAlreadyReleased)));
 }
 
 #[test]
@@ -311,7 +311,7 @@ fn test_approve_rejects_duplicate_client_approval() {
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestones()));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     let result = client.try_approve_milestone_release(&contract_id, &client_addr, &0);
-    assert_eq!(result, Err(Ok(EscrowError::AlreadyApproved)));
+    assert_eq!(result, Err(Ok(Error::AlreadyApproved)));
 }
 
 #[test]
@@ -332,7 +332,7 @@ fn test_approve_rejects_duplicate_arbiter_approval() {
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestones()));
     assert!(client.approve_milestone_release(&contract_id, &arbiter_addr, &0));
     let result = client.try_approve_milestone_release(&contract_id, &arbiter_addr, &0);
-    assert_eq!(result, Err(Ok(EscrowError::AlreadyApproved)));
+    assert_eq!(result, Err(Ok(Error::AlreadyApproved)));
 }
 
 #[test]
@@ -351,7 +351,7 @@ fn test_release_requires_funded_state() {
     );
 
     let result = client.try_release_milestone(&contract_id, &client_addr, &0);
-    assert_eq!(result, Err(Ok(EscrowError::InvalidState)));
+    assert_eq!(result, Err(Ok(Error::InvalidState)));
 }
 
 #[test]
@@ -373,7 +373,7 @@ fn test_release_rejects_already_released_milestone() {
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
     let result = client.try_release_milestone(&contract_id, &client_addr, &0);
-    assert_eq!(result, Err(Ok(EscrowError::MilestoneAlreadyReleased)));
+    assert_eq!(result, Err(Ok(Error::MilestoneAlreadyReleased)));
 }
 
 #[test]
@@ -400,7 +400,7 @@ fn test_issue_reputation_rejects_invalid_rating() {
     assert!(client.release_milestone(&contract_id, &client_addr, &2));
 
     let result = client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &0);
-    assert_eq!(result, Err(Ok(EscrowError::InvalidRating)));
+    assert_eq!(result, Err(Ok(Error::InvalidRating)));
 }
 
 #[test]
@@ -419,7 +419,7 @@ fn test_issue_reputation_requires_completed_contract() {
     );
 
     let result = client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5);
-    assert_eq!(result, Err(Ok(EscrowError::InvalidState)));
+    assert_eq!(result, Err(Ok(Error::InvalidState)));
 }
 
 #[test]
@@ -447,7 +447,7 @@ fn test_issue_reputation_rejects_duplicate_issuance() {
 
     assert!(client.issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5));
     let result = client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &4);
-    assert_eq!(result, Err(Ok(EscrowError::ReputationAlreadyIssued)));
+    assert_eq!(result, Err(Ok(Error::ReputationAlreadyIssued)));
 }
 
 #[test]
@@ -468,7 +468,7 @@ fn test_client_and_arbiter_mode_rejects_third_party_approval() {
     assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestones()));
 
     let result = client.try_approve_milestone_release(&contract_id, &outsider, &0);
-    assert_eq!(result, Err(Ok(EscrowError::UnauthorizedRole)));
+    assert_eq!(result, Err(Ok(Error::UnauthorizedRole)));
 }
 
 #[test]
@@ -489,7 +489,7 @@ fn test_arbiter_only_flow_enforces_arbiter_approval_and_release() {
 
     // Client cannot approve in ArbiterOnly.
     let client_approval = client.try_approve_milestone_release(&contract_id, &client_addr, &0);
-    assert_eq!(client_approval, Err(Ok(EscrowError::UnauthorizedRole)));
+    assert_eq!(client_approval, Err(Ok(Error::UnauthorizedRole)));
 
     assert!(client.approve_milestone_release(&contract_id, &arbiter_addr, &0));
     assert!(client.release_milestone(&contract_id, &arbiter_addr, &0));
