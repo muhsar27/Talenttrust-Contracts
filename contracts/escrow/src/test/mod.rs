@@ -6,6 +6,7 @@ use crate::{Escrow, EscrowClient, EscrowError};
 
 // ─── Submodules ───────────────────────────────────────────────────────────────
 
+mod admin_auth_helper;
 mod dispute;
 mod emergency_controls;
 mod lifecycle;
