@@ -25,7 +25,6 @@
 
 mod approvals;
 mod governance;
-mod protocol_fees;
 mod ttl;
 mod types;
 
