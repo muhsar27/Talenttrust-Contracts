@@ -445,11 +445,6 @@ fn multisig_only_one_approval_insufficient() {
     assert!(client.approve_milestone_release(&id, &client_addr, &0));
     let result = client.try_release_milestone(&id, &client_addr, &0);
     assert_contract_error(result, Error::InsufficientApprovals);
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
-    );
-    client.deposit_funds(&id, &client_addr, &800_i128);
-    (client_addr, freelancer_addr, id)
 }
 
 // ===========================================================================
