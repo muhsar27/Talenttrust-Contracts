@@ -1,6 +1,6 @@
 use crate::{
-    approvals, ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient,
-    Milestone, ReleaseAuthorization,
+    approvals, ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
+    ReleaseAuthorization,
 };
 use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
 
@@ -40,6 +40,7 @@ impl Escrow {
         caller: Address,
         milestone_index: u32,
     ) -> bool {
+        Self::require_not_paused(&env);
         caller.require_auth();
 
         let mut contract: Contract = env

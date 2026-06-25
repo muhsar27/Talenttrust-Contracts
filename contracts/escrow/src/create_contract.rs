@@ -1,5 +1,5 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient, Milestone,
+    ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
     ReleaseAuthorization,
 };
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol, Vec};
@@ -38,7 +38,7 @@ impl Escrow {
         client.require_auth();
 
         if client == freelancer {
-            env.panic_with_error(Error::InvalidParticipant);
+            env.panic_with_error(Error::InvalidParticipants);
         }
 
         match release_authorization {
@@ -69,8 +69,6 @@ impl Escrow {
         let id = next_contract_id(&env);
 
         ttl::extend_next_contract_id_ttl(&env);
-
-        let id = next_contract_id(&env);
 
         let freelancer_addr = freelancer.clone();
         let contract = Contract {
