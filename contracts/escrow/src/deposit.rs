@@ -21,6 +21,8 @@ impl Escrow {
     /// * `InvalidState` - If contract is not in Created state
     /// * `UnauthorizedRole` - If caller is not the client
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
+        Self::require_not_paused(&env);
+
         if amount <= 0 {
             env.panic_with_error(Error::AmountMustBePositive);
         }

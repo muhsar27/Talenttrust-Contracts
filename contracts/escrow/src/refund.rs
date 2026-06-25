@@ -28,6 +28,7 @@ impl Escrow {
         contract_id: u32,
         milestone_indices: Vec<u32>,
     ) -> i128 {
+        Self::require_not_paused(&env);
         if milestone_indices.is_empty() {
             env.panic_with_error(Error::EmptyRefundRequest);
         }

@@ -1,7 +1,7 @@
 #![cfg(test)]
 
 use super::register_client;
-use soroban_sdk::{testutils::Address as _, Address, Env};
+use soroban_sdk::{testutils::Address as _, testutils::Events as _, Address, Env};
 
 #[test]
 fn protocol_fee_bps_change_emits_event() {
@@ -21,7 +21,7 @@ fn protocol_fee_bps_change_emits_event() {
     assert!(events.len() > 0);
 
     // Ensure an event with the protocol_fee_bps topic exists
-    let found = events.iter().any(|event| event.0 == soroban_sdk::symbol_short!("protocol_fee_bps"));
+    let found = events.iter().any(|event| event.0 == soroban_sdk::Symbol::new(&env, "protocol_fee_bps"));
     assert!(found);
 }
 

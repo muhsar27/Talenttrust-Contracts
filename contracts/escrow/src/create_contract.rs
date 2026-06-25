@@ -35,10 +35,11 @@ impl Escrow {
         milestones: Vec<i128>,
         release_authorization: ReleaseAuthorization,
     ) -> u32 {
+        Self::require_not_paused(&env);
         client.require_auth();
 
         if client == freelancer {
-            env.panic_with_error(Error::InvalidParticipant);
+            env.panic_with_error(Error::InvalidParticipants);
         }
 
         match release_authorization {
@@ -65,10 +66,6 @@ impl Escrow {
                 env.panic_with_error(Error::InvalidMilestoneAmount);
             }
         }
-
-        let id = next_contract_id(&env);
-
-        ttl::extend_next_contract_id_ttl(&env);
 
         let id = next_contract_id(&env);
 
@@ -106,6 +103,7 @@ impl Escrow {
         env.storage()
             .persistent()
             .set(&DataKey::NextContractId, &(id + 1));
+        ttl::extend_next_contract_id_ttl(&env);
 
         env.events().publish(
             (symbol_short!("created"), id),

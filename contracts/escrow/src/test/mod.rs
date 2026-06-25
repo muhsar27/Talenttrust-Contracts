@@ -7,12 +7,12 @@ use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 
 // --- Submodules ---
 
+mod client_migration;
 mod emergency_controls;
 mod pause_controls;
 mod persistence;
-mod reputation;
 mod release_authorization;
-mod client_migration;
+mod reputation;
 
 // --- Shared constants ---
 
@@ -89,8 +89,6 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
     assert!(client.approve_milestone_release(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.approve_milestone_release(&id, &client_addr, &2));
-    assert!(client.release_milestone(&id, &client_addr, &0));
-    assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &2));
     (client_addr, freelancer_addr, id)
 }
