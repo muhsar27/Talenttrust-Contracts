@@ -34,10 +34,13 @@ fn setup(env: &Env) -> (Address, Address, Address) {
     (client_addr, freelancer_addr, arbiter_addr)
 }
 
-/// Register the escrow contract and return a client.
+/// Register and initialize the escrow contract and return a client.
 fn register(env: &Env) -> EscrowClient<'_> {
     let id = env.register(Escrow, ());
-    EscrowClient::new(env, &id)
+    let client = EscrowClient::new(env, &id);
+    let admin = soroban_sdk::Address::generate(env);
+    client.initialize(&admin);
+    client
 }
 
 fn assert_contract_error<T, E>(
@@ -138,7 +141,10 @@ fn total() -> i128 {
 
 fn new_client(env: &Env) -> EscrowClient<'_> {
     let contract_id = env.register(Escrow, ());
-    EscrowClient::new(env, &contract_id)
+    let client = EscrowClient::new(env, &contract_id);
+    let admin = soroban_sdk::Address::generate(env);
+    client.initialize(&admin);
+    client
 }
 
 /// Create a funded contract with the given authorization mode.
@@ -712,7 +718,6 @@ fn rejects_double_release_and_completes_contract() {
     assert_contract_error(result, Error::MilestoneAlreadyReleased);
 
     assert!(client.release_milestone(&contract_id, &client_addr, &1));
-    assert!(client.release_milestone(&contract_id, &client_addr, &2));
 
     let contract = client.get_contract(&contract_id);
     assert_eq!(contract.status, ContractStatus::Completed);

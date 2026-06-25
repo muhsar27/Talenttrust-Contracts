@@ -31,7 +31,6 @@ fn setup_completed_contract(env: &Env, client: &EscrowClient) -> (Address, Addre
     client.approve_milestone_release(&id, &client_addr, &0);
     client.release_milestone(&id, &client_addr, &0);
     client.approve_milestone_release(&id, &client_addr, &1);
-    client.release_milestone(&id, &client_addr, &0);
     client.release_milestone(&id, &client_addr, &1);
     (client_addr, freelancer_addr, id)
 }

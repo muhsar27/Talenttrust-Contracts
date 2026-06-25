@@ -285,8 +285,6 @@ fn pause_blocks_finalization() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
-    let admin = Address::generate(&env);
-    assert!(client.initialize(&admin));
     let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
     assert!(client.pause());
 

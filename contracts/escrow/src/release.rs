@@ -27,6 +27,35 @@ impl Escrow {
 
         Self::require_not_finalized(env, contract_id);
 
+        // Load milestones early so per-milestone state checks take priority over
+        // contract-level checks (status, approvals).
+        let milestone_key = Symbol::new(env, "milestones");
+        let mut milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+            .unwrap();
+
+        ttl::extend_milestone_ttl(env, contract_id);
+
+        if milestone_index >= milestones.len() {
+            env.panic_with_error(Error::IndexOutOfBounds);
+        }
+
+        let mut milestone = milestones.get(milestone_index).unwrap().clone();
+
+        // Milestone-level checks must come before contract-status and approval checks so
+        // AlreadyReleased/AlreadyRefunded errors surface correctly even when those later
+        // checks would also fail (e.g. contract Completed after last refund, approvals
+        // cleared after first release).
+        if milestone.released {
+            env.panic_with_error(Error::MilestoneAlreadyReleased);
+        }
+
+        if milestone.refunded {
+            env.panic_with_error(Error::AlreadyRefunded);
+        }
+
         if contract.status != ContractStatus::Funded {
             env.panic_with_error(Error::InvalidState);
         }
@@ -60,29 +89,6 @@ impl Escrow {
 
         approvals::check_approvals(env, &contract, contract_id, milestone_index)
             .unwrap_or_else(|e| env.panic_with_error(e));
-
-        let milestone_key = Symbol::new(env, "milestones");
-        let mut milestones: Vec<Milestone> = env
-            .storage()
-            .persistent()
-            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
-            .unwrap();
-
-        ttl::extend_milestone_ttl(env, contract_id);
-
-        if milestone_index >= milestones.len() {
-            env.panic_with_error(Error::IndexOutOfBounds);
-        }
-
-        let mut milestone = milestones.get(milestone_index).unwrap().clone();
-
-        if milestone.released {
-            env.panic_with_error(Error::MilestoneAlreadyReleased);
-        }
-
-        if milestone.refunded {
-            env.panic_with_error(Error::AlreadyRefunded);
-        }
 
         let available_balance =
             contract.funded_amount - contract.released_amount - contract.refunded_amount;

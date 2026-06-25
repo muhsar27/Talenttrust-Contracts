@@ -29,7 +29,9 @@ impl Escrow {
         }
         caller.require_auth();
 
-        if contract.status != ContractStatus::Created {
+        if contract.status != ContractStatus::Created
+            && contract.status != ContractStatus::PartiallyFunded
+        {
             env.panic_with_error(Error::InvalidState);
         }
 
@@ -46,8 +48,10 @@ impl Escrow {
 
         let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
-        if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
+        if contract.funded_amount >= total_amount {
             contract.status = ContractStatus::Funded;
+        } else if contract.funded_amount > 0 && contract.status == ContractStatus::Created {
+            contract.status = ContractStatus::PartiallyFunded;
         }
 
         env.storage()

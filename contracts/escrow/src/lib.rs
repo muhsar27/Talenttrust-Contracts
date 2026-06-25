@@ -183,6 +183,7 @@ impl Escrow {
         caller: Address,
         milestone_index: u32,
     ) -> bool {
+        Self::require_not_finalized(&env, contract_id);
         approvals::approve_milestone(&env, contract_id, milestone_index, &caller)
             .unwrap_or_else(|e| env.panic_with_error(e))
     }
@@ -240,6 +241,7 @@ impl Escrow {
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
         Self::require_initialized(&env);
         Self::require_not_paused(&env);
+        Self::require_not_finalized(&env, contract_id);
         Self::deposit_funds_impl(&env, contract_id, caller, amount)
     }
 
@@ -296,7 +298,7 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
         ttl::extend_contract_ttl(&env, contract_id);
         contract
     }
@@ -465,10 +467,10 @@ impl Escrow {
         ttl::extend_contract_ttl(&env, contract_id);
 
         if caller != contract.client {
-            env.panic_with_error(Error::UnauthorizedRole);
+            env.panic_with_error(EscrowError::UnauthorizedRole);
         }
         if freelancer != contract.freelancer {
-            env.panic_with_error(Error::FreelancerMismatch);
+            env.panic_with_error(EscrowError::FreelancerMismatch);
         }
         if rating < 1 || rating > 5 {
             env.panic_with_error(EscrowError::InvalidRating);

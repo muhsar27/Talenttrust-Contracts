@@ -49,6 +49,11 @@ impl Escrow {
 
         let id = next_contract_id(env);
 
+        // Write the counter before extending its TTL — extend_ttl panics if the key
+        // has never been written.
+        env.storage()
+            .persistent()
+            .set(&DataKey::NextContractId, &(id + 1));
         ttl::extend_next_contract_id_ttl(env);
 
         let freelancer_addr = freelancer.clone();
@@ -81,10 +86,6 @@ impl Escrow {
         env.storage()
             .persistent()
             .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::NextContractId, &(id + 1));
 
         // Track pending reputation credit for the freelancer.
         let pending_key = DataKey::PendingReputationCredits(freelancer_addr.clone());
