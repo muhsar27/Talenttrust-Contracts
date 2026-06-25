@@ -1,8 +1,8 @@
 use soroban_sdk::{contracttype, symbol_short, Address, Env, Symbol, Vec};
 
 use crate::{
-    safe_subtract_amounts, Contract, ContractStatus, ContractSummary, DataKey, Escrow,
-    EscrowError, Milestone, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    safe_subtract_amounts, Contract, ContractStatus, ContractSummary, DataKey, Escrow, EscrowError,
+    Milestone, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 /// Immutable metadata written when an escrow contract is closed.
@@ -108,9 +108,8 @@ impl Escrow {
         let after_releases =
             safe_subtract_amounts(contract.funded_amount, contract.released_amount)
                 .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
-        let refundable_balance =
-            safe_subtract_amounts(after_releases, contract.refunded_amount)
-                .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
+        let refundable_balance = safe_subtract_amounts(after_releases, contract.refunded_amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::AccountingInvariantViolated));
 
         ContractSummary {
             schema_version: CONTRACT_SUMMARY_SCHEMA_VERSION,
