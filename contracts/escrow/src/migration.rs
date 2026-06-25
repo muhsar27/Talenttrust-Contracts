@@ -151,7 +151,6 @@ impl Escrow {
         );
         true
     }
-
     /// Return true if a live pending client migration exists.
     pub fn has_pending_client_migration(env: Env, contract_id: u32) -> bool {
         Self::pending_migration_exists(&env, contract_id)
