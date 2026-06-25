@@ -139,7 +139,7 @@ impl Escrow {
 
         let key = Self::pending_migration_key(contract_id);
         // Ensure a pending migration exists, otherwise panic with InvalidState
-        let _ = read_if_live(&env, &key).unwrap_or_else(|| env.panic_with_error(EscrowError::InvalidState));
+        let _: PendingClientMigration = read_if_live(&env, &key).unwrap_or_else(|| env.panic_with_error(EscrowError::InvalidState));
 
         // Remove the pending migration entry
         remove_transient(&env, &key);

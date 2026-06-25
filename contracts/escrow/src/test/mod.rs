@@ -13,6 +13,7 @@ mod persistence;
 mod reputation;
 mod release_authorization;
 mod client_migration;
+mod create_contract_bounds;
 
 // --- Shared constants ---
 

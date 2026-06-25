@@ -67,7 +67,8 @@ let contract_id = escrow.create_contract(
 
 Creation requires `client.require_auth()`, rejects identical client/freelancer
 addresses, rejects empty or non-positive milestones, caps milestone count at
-`MAX_MILESTONES`, and caps total escrow value at `MAX_TOTAL_ESCROW_STROOPS`.
+`MAX_MILESTONES` (rejecting with `TooManyMilestones`), and caps total escrow value
+against governed `max_escrow_total_stroops` (rejecting with `TotalCapExceeded`).
 
 ### 3. Deposit Funds
 

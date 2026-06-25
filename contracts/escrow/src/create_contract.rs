@@ -3,6 +3,7 @@ use crate::{
     ReleaseAuthorization,
 };
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol, Vec};
+use crate::{MAX_MILESTONES, amount_validation, types::GovernedParameters};
 
 #[contractimpl]
 impl Escrow {
@@ -20,14 +21,23 @@ impl Escrow {
     /// The unique contract ID
     ///
     /// # Errors
-    /// * `InvalidParticipants` - If client and freelancer are the same address
+    /// * `InvalidParticipant` - If client and freelancer are the same address
     /// * `EmptyMilestones` - If no milestones are provided
     /// * `InvalidMilestoneAmount` - If any milestone amount is <= 0
     /// * `MissingArbiter` - If arbiter is required but not provided
     /// * `InvalidArbiter` - If arbiter is same as client or freelancer
+    /// * `TooManyMilestones` - If the number of milestones exceeds MAX_MILESTONES
+    /// * `TotalCapExceeded` - If the sum of milestone amounts exceeds the governed cap
     /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
     /// * `ContractIdCollision` - If the allocated id slot is already occupied
-
+    pub fn create_contract(
+        env: Env,
+        client: Address,
+        freelancer: Address,
+        arbiter: Option<Address>,
+        milestones: Vec<i128>,
+        release_authorization: ReleaseAuthorization,
+    ) -> u32 {
         client.require_auth();
 
         if client == freelancer {
@@ -53,17 +63,37 @@ impl Escrow {
             env.panic_with_error(Error::EmptyMilestones);
         }
 
-        for amount in milestones.iter() {
-            if amount <= 0 {
-                env.panic_with_error(Error::InvalidMilestoneAmount);
-            }
+        // Enforce maximum number of milestones
+        if milestones.len() > MAX_MILESTONES {
+            env.panic_with_error(Error::TooManyMilestones);
+        }
+
+        // Retrieve governed parameters for total escrow cap
+        let max_total = if let Some(params) = env.storage().persistent().get::<_, GovernedParameters>(&DataKey::GovernedParameters) {
+            params.max_escrow_total_stroops
+        } else {
+            // If governance parameters are not set, allow any total (use max i128)
+            i128::MAX
+        };
+
+        // Validate milestone amounts and total against caps
+        let mut native_milestones = [0_i128; MAX_MILESTONES as usize];
+        let len = milestones.len() as usize;
+        for i in 0..len {
+            native_milestones[i] = milestones.get(i as u32).unwrap();
+        }
+        match amount_validation::validate_milestone_amounts(&native_milestones[..len], max_total) {
+            Ok(_) => (),
+            Err(err) => match err {
+                Error::InvalidMilestoneAmount => env.panic_with_error(Error::InvalidMilestoneAmount),
+                Error::TotalCapExceeded => env.panic_with_error(Error::TotalCapExceeded),
+                _ => env.panic_with_error(Error::InvalidMilestoneAmount),
+            },
         }
 
         let id = next_contract_id(&env);
 
         ttl::extend_next_contract_id_ttl(&env);
-
-        let id = next_contract_id(&env);
 
         let freelancer_addr = freelancer.clone();
         let contract = Contract {
@@ -89,6 +119,7 @@ impl Escrow {
                 refunded: false,
                 work_evidence: None,
                 refunded_amount: 0,
+                deadline: None,
             });
         }
         let milestone_key = Symbol::new(&env, "milestones");
