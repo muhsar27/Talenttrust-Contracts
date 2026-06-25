@@ -94,6 +94,10 @@ fix lands.
 When the final milestone is released, status becomes `Completed` and one pending
 reputation credit is added for the freelancer.
 
+`PendingReputationCredits` is a non-negative counter that tracks completed
+contracts awaiting client-issued reputation for a freelancer. `issue_reputation`
+consumes one pending credit and records the rating.
+
 ### 5. Issue Reputation
 
 ```rust

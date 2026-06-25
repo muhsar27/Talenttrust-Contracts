@@ -712,6 +712,9 @@ impl Escrow {
 
         let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
         let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+        if pending <= 0 {
+            env.panic_with_error(EscrowError::InvalidState);
+        }
         env.storage().persistent().set(&pending_key, &(pending - 1));
 
         let rep_key = DataKey::Reputation(contract.freelancer.clone());

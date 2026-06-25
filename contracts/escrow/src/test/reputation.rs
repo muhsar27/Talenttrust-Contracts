@@ -109,3 +109,63 @@ fn issue_reputation_updates_reputation_record_and_pending_credits() {
     assert_eq!(reputation.last_rating, 5);
     assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 0);
 }
+
+#[test]
+fn multiple_completed_contracts_accumulate_pending_reputation_credits() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
+    let milestones = super::default_milestones(&env);
+    let total = super::total_milestone_amount();
+
+    let first_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &super::ReleaseAuthorization::ClientOnly,
+    );
+    assert!(client.deposit_funds(&first_id, &client_addr, &total));
+    assert!(client.approve_milestone_release(&first_id, &client_addr, &0));
+    assert!(client.release_milestone(&first_id, &client_addr, &0));
+    assert!(client.approve_milestone_release(&first_id, &client_addr, &1));
+    assert!(client.release_milestone(&first_id, &client_addr, &1));
+    assert!(client.approve_milestone_release(&first_id, &client_addr, &2));
+    assert!(client.release_milestone(&first_id, &client_addr, &2));
+
+    let second_id = client.create_contract(
+        &client_addr,
+        &freelancer_addr,
+        &None,
+        &milestones,
+        &super::ReleaseAuthorization::ClientOnly,
+    );
+    assert!(client.deposit_funds(&second_id, &client_addr, &total));
+    assert!(client.approve_milestone_release(&second_id, &client_addr, &0));
+    assert!(client.release_milestone(&second_id, &client_addr, &0));
+    assert!(client.approve_milestone_release(&second_id, &client_addr, &1));
+    assert!(client.release_milestone(&second_id, &client_addr, &1));
+    assert!(client.approve_milestone_release(&second_id, &client_addr, &2));
+    assert!(client.release_milestone(&second_id, &client_addr, &2));
+
+    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 2);
+    assert!(client.issue_reputation(&first_id, &client_addr, &freelancer_addr, &5));
+    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 1);
+}
+
+#[test]
+fn issue_reputation_duplicate_attempt_preserves_pending_credits() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let client = register_client(&env);
+    let (client_addr, freelancer_addr, contract_id) = complete_contract(&env, &client);
+
+    assert!(client.issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5));
+    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 0);
+
+    let result = client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &4);
+    super::assert_contract_error(result, EscrowError::ReputationAlreadyIssued);
+    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 0);
+}
