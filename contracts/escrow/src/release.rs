@@ -44,6 +44,8 @@ impl Escrow {
 
         Self::require_not_paused(&env);
 
+        Self::require_not_finalized(&env, contract_id);
+
         let mut contract: Contract = env
             .storage()
             .persistent()
@@ -52,7 +54,28 @@ impl Escrow {
 
         ttl::extend_contract_ttl(&env, contract_id);
 
-        Self::require_not_finalized(&env, contract_id);
+        let milestone_key = Symbol::new(&env, "milestones");
+        let mut milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+            .unwrap();
+
+        ttl::extend_milestone_ttl(&env, contract_id);
+
+        if milestone_index >= milestones.len() {
+            env.panic_with_error(Error::IndexOutOfBounds);
+        }
+
+        let mut milestone = milestones.get(milestone_index).unwrap().clone();
+
+        if milestone.released {
+            env.panic_with_error(Error::MilestoneAlreadyReleased);
+        }
+
+        if milestone.refunded {
+            env.panic_with_error(Error::AlreadyRefunded);
+        }
 
         if contract.status != ContractStatus::Funded {
             env.panic_with_error(Error::InvalidState);
@@ -88,29 +111,6 @@ impl Escrow {
         approvals::check_approvals(&env, &contract, contract_id, milestone_index)
             .unwrap_or_else(|e| env.panic_with_error(e));
 
-        let milestone_key = Symbol::new(&env, "milestones");
-        let mut milestones: Vec<Milestone> = env
-            .storage()
-            .persistent()
-            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
-            .unwrap();
-
-        ttl::extend_milestone_ttl(&env, contract_id);
-
-        if milestone_index >= milestones.len() {
-            env.panic_with_error(Error::IndexOutOfBounds);
-        }
-
-        let mut milestone = milestones.get(milestone_index).unwrap().clone();
-
-        if milestone.released {
-            env.panic_with_error(Error::MilestoneAlreadyReleased);
-        }
-
-        if milestone.refunded {
-            env.panic_with_error(Error::AlreadyRefunded);
-        }
-
         let available_balance =
             contract.funded_amount - contract.released_amount - contract.refunded_amount;
         if available_balance < milestone.amount {
@@ -143,6 +143,10 @@ impl Escrow {
         let all_released = milestones.iter().all(|m| m.released || m.refunded);
         if all_released {
             contract.status = ContractStatus::Completed;
+
+            let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
+            let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+            env.storage().persistent().set(&pending_key, &(pending + 1));
         }
 
         env.storage().persistent().set(
