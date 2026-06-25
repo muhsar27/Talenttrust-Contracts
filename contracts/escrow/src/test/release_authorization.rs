@@ -760,8 +760,8 @@ fn rejects_refund_after_release_and_release_after_refund() {
     assert_contract_error(result, Error::AlreadyRefunded);
 }
 
-use soroban_sdk::{testutils::Address as _, Env, Address};
-use crate::{EscrowContract, EscrowContractClient, types::Error};
+use crate::{types::Error, EscrowContract, EscrowContractClient};
+use soroban_sdk::{testutils::Address as _, Address, Env};
 
 #[test]
 fn test_revoke_approval_and_release_failure() {
@@ -773,13 +773,13 @@ fn test_revoke_approval_and_release_failure() {
 
     let party_client = Address::generate(&env);
     let party_freelancer = Address::generate(&env);
-    
+
     // Initialize standard mock setup (Assume helper method matching your workspace configuration)
     // client.initialize(&party_client, &party_freelancer, ...);
 
     // 1. Set milestone approval flag
     client.approve_milestone(&contract_id, &party_client, &0);
-    
+
     // 2. Perform validation checking revocation clears flag properly
     client.revoke_approval(&contract_id, &party_client, &0);
 

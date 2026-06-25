@@ -852,19 +852,17 @@ impl Escrow {
     // Internal helpers
     // -----------------------------------------------------------------------
 
-
     fn require_not_finalized(env: &Env, contract_id: u32) {
-    let finalized = env
-        .storage()
-        .persistent()
-        .get::<_, bool>(&DataKey::Finalized(contract_id))
-        .unwrap_or(false);
+        let finalized = env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Finalized(contract_id))
+            .unwrap_or(false);
 
-    if finalized {
-        env.panic_with_error(EscrowError::AlreadyFinalized);
+        if finalized {
+            env.panic_with_error(EscrowError::AlreadyFinalized);
+        }
     }
-    }
-
 
     fn require_initialized(env: &Env) {
         if !env
