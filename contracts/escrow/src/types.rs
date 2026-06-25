@@ -162,6 +162,7 @@ pub struct Milestone {
     pub refunded: bool,
     pub work_evidence: Option<String>,
     pub refunded_amount: i128,
+    pub deadline: Option<u64>,
 }
 
 /// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
