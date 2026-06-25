@@ -24,7 +24,10 @@ pub const MILESTONE_THREE: i128 = 600_0000000;
 
 pub fn register_client(env: &Env) -> EscrowClient<'_> {
     let id = env.register(Escrow, ());
-    EscrowClient::new(env, &id)
+    let client = EscrowClient::new(env, &id);
+    let admin = Address::generate(env);
+    client.initialize(&admin);
+    client
 }
 
 pub fn default_milestones(env: &Env) -> soroban_sdk::Vec<i128> {
@@ -89,8 +92,6 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
     assert!(client.approve_milestone_release(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.approve_milestone_release(&id, &client_addr, &2));
-    assert!(client.release_milestone(&id, &client_addr, &0));
-    assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &2));
     (client_addr, freelancer_addr, id)
 }

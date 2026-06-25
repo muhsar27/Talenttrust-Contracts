@@ -2,13 +2,12 @@
 
 use crate::{
     types::{ContractStatus, DataKey},
-    Contract, Escrow, EscrowClient, EscrowError,
+    Contract, EscrowError,
 };
 use crate::migration::PendingClientMigration;
 use crate::ttl::PENDING_MIGRATION_TTL_LEDGERS;
 use soroban_sdk::{
-    testutils::Address as _,
-    testutils::Ledger as _,
+    testutils::{Address as _, Events as _, Ledger as _},
     testutils::LedgerInfo,
     Address, Env, IntoVal, Symbol, Val,
 };

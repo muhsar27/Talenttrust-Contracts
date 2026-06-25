@@ -1,34 +1,13 @@
-use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient, Milestone,
-    ReleaseAuthorization,
-};
-use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol, Vec};
+use crate::{ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone, ReleaseAuthorization};
+use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
-#[contractimpl]
 impl Escrow {
-    /// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
+    /// Core logic for creating a new escrow contract.
     ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `client` - The address of the client funding the contract
-    /// * `freelancer` - The address of the freelancer performing the work
-    /// * `arbiter` - Optional arbiter address for dispute resolution
-    /// * `milestones` - Vector of milestone amounts (in stroops)
-    /// * `release_authorization` - Authorization mode for milestone releases
-    ///
-    /// # Returns
-    /// The unique contract ID
-    ///
-    /// # Errors
-    /// * `InvalidParticipants` - If client and freelancer are the same address
-    /// * `EmptyMilestones` - If no milestones are provided
-    /// * `InvalidMilestoneAmount` - If any milestone amount is <= 0
-    /// * `MissingArbiter` - If arbiter is required but not provided
-    /// * `InvalidArbiter` - If arbiter is same as client or freelancer
-    /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
-    /// * `ContractIdCollision` - If the allocated id slot is already occupied
-    pub fn create_contract(
-        env: Env,
+    /// Called from the single `#[contractimpl]` block in lib.rs after the
+    /// initialization and pause guards have been checked.
+    pub(crate) fn create_contract_impl(
+        env: &Env,
         client: Address,
         freelancer: Address,
         arbiter: Option<Address>,
@@ -38,7 +17,7 @@ impl Escrow {
         client.require_auth();
 
         if client == freelancer {
-            env.panic_with_error(Error::InvalidParticipant);
+            env.panic_with_error(Error::InvalidParticipants);
         }
 
         match release_authorization {
@@ -66,11 +45,9 @@ impl Escrow {
             }
         }
 
-        let id = next_contract_id(&env);
+        let id = next_contract_id(env);
 
-        ttl::extend_next_contract_id_ttl(&env);
-
-        let id = next_contract_id(&env);
+        ttl::extend_next_contract_id_ttl(env);
 
         let freelancer_addr = freelancer.clone();
         let contract = Contract {
@@ -87,7 +64,7 @@ impl Escrow {
             .persistent()
             .set(&DataKey::Contract(id), &contract);
 
-        let mut milestone_vec: Vec<Milestone> = Vec::new(&env);
+        let mut milestone_vec: Vec<Milestone> = Vec::new(env);
         for amount in milestones.iter() {
             milestone_vec.push_back(Milestone {
                 amount,
@@ -98,7 +75,7 @@ impl Escrow {
                 refunded_amount: 0,
             });
         }
-        let milestone_key = Symbol::new(&env, "milestones");
+        let milestone_key = Symbol::new(env, "milestones");
         env.storage()
             .persistent()
             .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
@@ -106,6 +83,11 @@ impl Escrow {
         env.storage()
             .persistent()
             .set(&DataKey::NextContractId, &(id + 1));
+
+        // Track pending reputation credit for the freelancer.
+        let pending_key = DataKey::PendingReputationCredits(freelancer_addr.clone());
+        let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+        env.storage().persistent().set(&pending_key, &(pending + 1));
 
         env.events().publish(
             (symbol_short!("created"), id),
@@ -117,7 +99,7 @@ impl Escrow {
 }
 
 /// Returns the next contract id after verifying the slot is unused.
-fn next_contract_id(env: &Env) -> u32 {
+pub(crate) fn next_contract_id(env: &Env) -> u32 {
     let id: u32 = env
         .storage()
         .persistent()
@@ -134,15 +116,4 @@ fn next_contract_id(env: &Env) -> u32 {
     }
 
     id
-}
-
-/// Advances [`DataKey::NextContractId`] after a contract is persisted.
-#[allow(dead_code)]
-fn bump_next_contract_id(env: &Env, id: u32) {
-    let next_id = id
-        .checked_add(1)
-        .unwrap_or_else(|| env.panic_with_error(Error::ContractIdOverflow));
-    env.storage()
-        .persistent()
-        .set(&DataKey::NextContractId, &next_id);
 }

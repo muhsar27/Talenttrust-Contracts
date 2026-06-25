@@ -1,41 +1,16 @@
 use crate::{
-    approvals, ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient,
-    Milestone, ReleaseAuthorization,
+    approvals, ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
+    ReleaseAuthorization,
 };
-use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
-#[contractimpl]
 impl Escrow {
-    /// Releases a specific milestone, transferring funds to the freelancer.
+    /// Core logic for releasing a milestone, transferring funds to the freelancer.
     ///
-    /// Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
-    ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    /// * `caller` - The address of the caller (must be authorized)
-    /// * `milestone_index` - The index of the milestone to release
-    ///
-    /// # Returns
-    /// `true` if release was successful
-    ///
-    /// # Errors
-    /// * `ContractNotFound` - If contract doesn't exist
-    /// * `InvalidState` - If contract is not in Funded state
-    /// * `InvalidMilestone` - If milestone index is out of bounds
-    /// * `AlreadyReleased` - If milestone was already released
-    /// * `AlreadyRefunded` - If milestone was already refunded
-    /// * `InsufficientFunds` - If contract doesn't have enough funded balance
-    /// * `InsufficientApprovals` - If required approvals are missing
-    /// * `ApprovalExpired` - If approvals have expired
-    /// * `UnauthorizedRole` - If caller is not authorized to release
-    ///
-    /// # Security
-    /// - Requires valid approvals that haven't expired
-    /// - Approvals are cleared after successful release
-    /// - Fail-closed: missing or expired approvals prevent release
-    pub fn release_milestone(
-        env: Env,
+    /// Called from the single `#[contractimpl]` block in lib.rs after the
+    /// initialization, pause, and auth guards have been checked.
+    pub(crate) fn release_milestone_impl(
+        env: &Env,
         contract_id: u32,
         caller: Address,
         milestone_index: u32,
@@ -48,9 +23,9 @@ impl Escrow {
             .get(&DataKey::Contract(contract_id))
             .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
 
-        ttl::extend_contract_ttl(&env, contract_id);
+        ttl::extend_contract_ttl(env, contract_id);
 
-        Self::require_not_finalized(&env, contract_id);
+        Self::require_not_finalized(env, contract_id);
 
         if contract.status != ContractStatus::Funded {
             env.panic_with_error(Error::InvalidState);
@@ -83,17 +58,17 @@ impl Escrow {
             }
         }
 
-        approvals::check_approvals(&env, &contract, contract_id, milestone_index)
+        approvals::check_approvals(env, &contract, contract_id, milestone_index)
             .unwrap_or_else(|e| env.panic_with_error(e));
 
-        let milestone_key = Symbol::new(&env, "milestones");
+        let milestone_key = Symbol::new(env, "milestones");
         let mut milestones: Vec<Milestone> = env
             .storage()
             .persistent()
             .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
             .unwrap();
 
-        ttl::extend_milestone_ttl(&env, contract_id);
+        ttl::extend_milestone_ttl(env, contract_id);
 
         if milestone_index >= milestones.len() {
             env.panic_with_error(Error::IndexOutOfBounds);
@@ -120,23 +95,22 @@ impl Escrow {
         milestones.set(milestone_index, milestone.clone());
         contract.released_amount += milestone.amount;
 
-        if is_initialized(&env) {
-            let fee_bps = get_protocol_fee_bps(&env);
-            if fee_bps > 0 {
-                let fee = calculate_protocol_fee(milestone.amount, fee_bps);
-                let current_accumulated: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::AccumulatedProtocolFees)
-                    .unwrap_or(0);
-                env.storage().persistent().set(
-                    &DataKey::AccumulatedProtocolFees,
-                    &(current_accumulated + fee),
-                );
-            }
+        // Protocol fees are always accumulated now that initialization is required.
+        let fee_bps = Self::get_protocol_fee_bps(env);
+        if fee_bps > 0 {
+            let fee = Self::calculate_protocol_fee(milestone.amount, fee_bps);
+            let current_accumulated: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::AccumulatedProtocolFees)
+                .unwrap_or(0);
+            env.storage().persistent().set(
+                &DataKey::AccumulatedProtocolFees,
+                &(current_accumulated + fee),
+            );
         }
 
-        approvals::clear_approvals(&env, contract_id, milestone_index);
+        approvals::clear_approvals(env, contract_id, milestone_index);
 
         let all_released = milestones.iter().all(|m| m.released || m.refunded);
         if all_released {
@@ -151,32 +125,8 @@ impl Escrow {
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
 
-        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
+        ttl::extend_contract_and_milestones_ttl(env, contract_id);
 
         true
     }
-}
-
-/// Returns true if the contract has been initialized.
-fn is_initialized(env: &Env) -> bool {
-    env.storage()
-        .persistent()
-        .get::<_, bool>(&DataKey::Initialized)
-        .unwrap_or(false)
-}
-
-/// Returns the protocol fee in basis points.
-fn get_protocol_fee_bps(env: &Env) -> u32 {
-    env.storage()
-        .persistent()
-        .get::<_, u32>(&DataKey::ProtocolFeeBps)
-        .unwrap_or(0)
-}
-
-/// Calculates the protocol fee for a given amount.
-fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-    if fee_bps == 0 {
-        return 0;
-    }
-    amount * fee_bps as i128 / 10_000
 }
