@@ -178,6 +178,8 @@ impl Escrow {
         caller: Address,
         milestone_index: u32,
     ) -> bool {
+        Self::require_not_finalized(&env, contract_id);
+
         approvals::approve_milestone(&env, contract_id, milestone_index, &caller)
             .unwrap_or_else(|e| env.panic_with_error(e))
     }

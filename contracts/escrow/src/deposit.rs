@@ -29,6 +29,8 @@ impl Escrow {
         // contract data so that unauthorised callers also get the same error).
         Self::require_not_paused(&env);
 
+        Self::require_not_finalized(&env, contract_id);
+
         let mut contract: Contract = env
             .storage()
             .persistent()

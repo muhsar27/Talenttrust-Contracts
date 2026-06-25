@@ -751,7 +751,6 @@ fn rejects_double_release_and_completes_contract() {
     assert_contract_error(result, Error::MilestoneAlreadyReleased);
 
     assert!(client.release_milestone(&contract_id, &client_addr, &1));
-    assert!(client.release_milestone(&contract_id, &client_addr, &2));
 
     let contract = client.get_contract(&contract_id);
     assert_eq!(contract.status, ContractStatus::Completed);

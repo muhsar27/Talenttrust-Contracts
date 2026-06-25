@@ -89,8 +89,6 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
     assert!(client.approve_milestone_release(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.approve_milestone_release(&id, &client_addr, &2));
-    assert!(client.release_milestone(&id, &client_addr, &0));
-    assert!(client.release_milestone(&id, &client_addr, &1));
     assert!(client.release_milestone(&id, &client_addr, &2));
     (client_addr, freelancer_addr, id)
 }

@@ -11,7 +11,7 @@ fn issue_reputation_rejects_unauthorized_caller() {
     let unauthorized = Address::generate(&env);
 
     let result = client.try_issue_reputation(&contract_id, &unauthorized, &freelancer_addr, &5);
-    super::assert_contract_error(result, EscrowError::UnauthorizedRole);
+    super::assert_contract_error(result, crate::Error::UnauthorizedRole);
 }
 
 #[test]
@@ -23,7 +23,7 @@ fn issue_reputation_rejects_freelancer_mismatch() {
     let wrong_freelancer = Address::generate(&env);
 
     let result = client.try_issue_reputation(&contract_id, &client_addr, &wrong_freelancer, &5);
-    super::assert_contract_error(result, EscrowError::FreelancerMismatch);
+    super::assert_contract_error(result, crate::Error::FreelancerMismatch);
 }
 
 #[test]

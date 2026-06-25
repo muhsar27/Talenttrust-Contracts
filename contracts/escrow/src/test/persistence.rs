@@ -92,7 +92,10 @@ fn try_get_contract_reports_missing_state_without_mutating_storage() {
     env.mock_all_auths();
     let client = register_client(&env);
 
-    super::assert_contract_error(client.try_get_contract(&777), EscrowError::ContractNotFound);
+    super::assert_contract_error(
+        client.try_get_contract(&777),
+        crate::Error::ContractNotFound,
+    );
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     let milestones = vec![&env, 10_i128];
