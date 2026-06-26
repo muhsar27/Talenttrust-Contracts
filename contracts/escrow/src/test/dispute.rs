@@ -1,9 +1,15 @@
 #![cfg(test)]
 
-use crate::dispute::{final_status_after_resolution, resolution_payouts};
-use crate::{Contract, ContractStatus, DisputeResolution, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
-use soroban_sdk::testutils::{Address as _, Events};
-use soroban_sdk::{vec, Address, Env};
+use crate::{
+    ContractStatus,
+    DepositMode,
+    DisputeResolution,
+    Escrow,
+    EscrowClient,
+    EscrowError,
+    ReleaseAuthorization,
+};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 fn setup_initialized() -> (Env, Address, EscrowClient<'static>) {
     let env = Env::default();
@@ -31,6 +37,7 @@ fn create_funded_contract_with_arbiter(
         &Some(arbiter_addr.clone()),
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &deposit_amount));

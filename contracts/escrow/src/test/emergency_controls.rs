@@ -1,4 +1,4 @@
-use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{DepositMode, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 fn setup_initialized() -> (Env, Address, Address) {
@@ -21,6 +21,7 @@ fn setup_funded_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
         &None,
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     client.deposit_funds(&id, &client_addr, &300_i128);
     (client_addr, freelancer_addr, id)
@@ -84,6 +85,7 @@ fn emergency_blocks_create_contract() {
             &None,
             &vec![&env, 50_i128],
             &ReleaseAuthorization::ClientOnly,
+            &DepositMode::Incremental,
         ),
         EscrowError::ContractPaused,
     );
@@ -167,6 +169,7 @@ fn resolve_emergency_restores_all_operations() {
         &None,
         &vec![&env, 50_i128],
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     assert_eq!(id, 1);
 

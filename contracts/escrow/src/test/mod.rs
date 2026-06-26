@@ -3,7 +3,15 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, Vec};
 
-use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use crate::{
+    Contract,
+    ContractStatus,
+    DepositMode,
+    Escrow,
+    EscrowClient,
+    EscrowError,
+    ReleaseAuthorization,
+};
 
 // --- Submodules ---
 
@@ -54,6 +62,7 @@ pub fn create_contract(env: &Env, client: &EscrowClient) -> (Address, Address, u
         &None,
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     (client_addr, freelancer_addr, id)
 }
@@ -73,6 +82,7 @@ pub fn create_contract_with_arbiter(
         &Some(arbiter_addr.clone()),
         &milestones,
         &ReleaseAuthorization::ClientAndArbiter,
+        &DepositMode::Incremental,
     );
     (client_addr, freelancer_addr, arbiter_addr, id)
 }
@@ -145,6 +155,7 @@ pub fn create_default_contract(
         &None,
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     )
 }
 

@@ -1,6 +1,4 @@
-use crate::{
-    safe_add_amounts, ttl, Contract, ContractStatus, DataKey, Error, EscrowError, Milestone,
-};
+use crate::{ttl, Contract, ContractStatus, DataKey, DepositMode, Error, Milestone};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Deposits funds into the contract. Transitions to Funded status when fully funded.
@@ -41,11 +39,6 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
         env.panic_with_error(Error::InvalidState);
     }
 
-    contract.funded_amount = safe_add_amounts(contract.funded_amount, amount)
-        .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
-    contract.total_deposited = safe_add_amounts(contract.total_deposited, amount)
-        .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
-
     let milestone_key = Symbol::new(&env, "milestones");
     let milestones: Vec<Milestone> = env
         .storage()
@@ -57,8 +50,31 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
 
     let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
-    if contract.funded_amount >= total_amount {
-        contract.status = ContractStatus::Funded;
+    match contract.deposit_mode {
+        DepositMode::ExactTotal => {
+            if amount < total_amount {
+                env.panic_with_error(Error::ExactDepositRequired);
+            }
+            if amount > total_amount {
+                env.panic_with_error(Error::DepositWouldExceedTotal);
+            }
+            contract.funded_amount += amount;
+            contract.total_deposited += amount;
+            contract.status = ContractStatus::Funded;
+        }
+        DepositMode::Incremental => {
+            let new_total = contract.total_deposited + amount;
+            if new_total > total_amount {
+                env.panic_with_error(Error::DepositWouldExceedTotal);
+            }
+            contract.funded_amount += amount;
+            contract.total_deposited += amount;
+            contract.status = if new_total == total_amount {
+                ContractStatus::Funded
+            } else {
+                ContractStatus::PartiallyFunded
+            };
+        }
     }
 
     env.storage()

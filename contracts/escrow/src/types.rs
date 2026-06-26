@@ -44,6 +44,7 @@ pub struct Contract {
     pub refunded_amount: i128,
     pub release_authorization: ReleaseAuthorization,
     pub reputation_issued: bool,
+    pub deposit_mode: DepositMode,
 }
 
 // ─── Storage keys ──────────────────────────────────────────────────────────────
@@ -168,12 +169,8 @@ pub enum Error {
     ContractIdOverflow = 28,
     EmptyComment = 29,
     CommentTooLong = 30,
-    EvidenceTooLong = 31,
-    PotentialOverflow = 32,
-    NotInitialized = 33,
-    ArbiterRequired = 34,
-    InvalidDisputeSplit = 35,
-    AccountingInvariantViolated = 36,
+    ExactDepositRequired = 31,
+    DepositWouldExceedTotal = 32,
 }
 
 /// Contract lifecycle states
@@ -212,6 +209,7 @@ pub enum ReleaseAuthorization {
 }
 
 /// Tracks approval status for a milestone.
+/// Stored in temporary storage with TTL for expiry grace period.
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MilestoneApprovals {
@@ -225,6 +223,35 @@ pub struct MilestoneApprovals {
 pub enum DepositMode {
     ExactTotal = 0,
     Incremental = 1,
+}
+
+/// Readiness checklist stored under [`DataKey::ReadinessChecklist`].
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ReadinessChecklist {
+    /// `true` after `initialize` has been called successfully.
+    pub initialized: bool,
+    /// `true` after protocol governance parameters have been set.
+    pub governed_params_set: bool,
+    /// `true` after an emergency control operation has been invoked.
+    pub emergency_controls_enabled: bool,
+}
+
+impl Default for ReadinessChecklist {
+    fn default() -> Self {
+        ReadinessChecklist {
+            initialized: false,
+            governed_params_set: false,
+            emergency_controls_enabled: false,
+        }
+    }
+}
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct GovernedParameters {
+    pub protocol_fee_bps: u32,
+    pub max_escrow_total_stroops: i128,
 }
 
 #[contracttype]

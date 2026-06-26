@@ -1,5 +1,21 @@
-use crate::{ContractStatus, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
-use soroban_sdk::{symbol_short, testutils::Address as _, vec, Address, Env};
+//! Tests for the pause + emergency gate on mutating escrow entrypoints.
+//!
+//! Issue #452: `create_contract`, `deposit_funds`, `release_milestone`,
+//! `refund_unreleased_milestones`, `issue_reputation`, and `cancel_contract`
+//! must all honor the `Paused` and `Emergency` flags so the documented
+//! behavior holds. Read-only queries must remain available while paused.
+//!
+//! Each mutating entrypoint is exercised against three states:
+//! 1. **Paused only**: `pause()` blocks the call with `ContractPaused`.
+//! 2. **Emergency only** (Paused=false, Emergency=true): the call is blocked
+//!    with `EmergencyActive`.
+//! 3. **Recovered**: `unpause()` (or `resolve_emergency()`) restores the
+//!    happy path.
+//!
+//! Run locally with `cargo test -p escrow --lib pause_controls`.
+
+use crate::{DepositMode, Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
+use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -28,6 +44,7 @@ fn setup_created_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Add
         &None,
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     (client_addr, freelancer_addr, id)
 }
@@ -47,6 +64,7 @@ fn setup_funded_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Addr
         &None,
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     client.deposit_funds(&id, &client_addr, &300_i128);
     (client_addr, freelancer_addr, id)
@@ -126,6 +144,7 @@ fn pause_blocks_create_contract() {
             &None,
             &vec![&env, 50_i128],
             &ReleaseAuthorization::ClientOnly,
+            &DepositMode::Incremental,
         ),
         EscrowError::ContractPaused,
     );
@@ -161,6 +180,7 @@ fn unpause_restores_create_contract() {
         &None,
         &vec![&env, 50_i128],
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
     assert_eq!(id, 1);
 }
@@ -186,6 +206,7 @@ fn cancel_contract_emits_cancelled_event() {
         &None,
         &milestones,
         &ReleaseAuthorization::ClientOnly,
+        &DepositMode::Incremental,
     );
 
     // Capture timestamp before cancellation
@@ -220,14 +241,18 @@ fn cancel_contract_emits_event_with_previous_status_funded() {
     assert!(client.initialize(&admin));
 
     let client_addr = Address::generate(&env);
-    let freelancer_addr = Address::generate(&env);
-    let milestones = vec![&env, 100_i128, 200_i128, 300_i128];
-    let contract_id = client.create_contract(
-        &client_addr,
-        &freelancer_addr,
-        &None,
-        &milestones,
-        &ReleaseAuthorization::ClientOnly,
+    let milestones = vec![&env, 50_i128];
+
+    super::assert_contract_error(
+        client.try_create_contract(
+            &outsider,
+            &client_addr,
+            &None,
+            &milestones,
+            &ReleaseAuthorization::ClientOnly,
+            &DepositMode::Incremental,
+        ),
+        EscrowError::ContractPaused,
     );
 
     // Fund the contract (transitions to Funded state)
