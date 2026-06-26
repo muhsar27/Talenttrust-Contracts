@@ -119,16 +119,13 @@ pub(crate) fn next_contract_id(env: &Env) -> u32 {
         .get(&DataKey::NextContractId)
         .unwrap_or(1);
 
-        if env
-            .storage()
-            .persistent()
-            .get::<_, Contract>(&DataKey::Contract(id))
-            .is_some()
-        {
-            env.panic_with_error(Error::ContractIdCollision);
-        }
-
-        id
+    if env
+        .storage()
+        .persistent()
+        .get::<_, Contract>(&DataKey::Contract(id))
+        .is_some()
+    {
+        env.panic_with_error(Error::ContractIdCollision);
     }
 
     id
