@@ -89,6 +89,7 @@ pub enum Error {
     InvalidState = 16,
     MilestoneAlreadyReleased = 17,
     AlreadyApproved = 18,
+    DepositModeMismatch = 31,
     InsufficientApprovals = 20,
     FreelancerMismatch = 21,
     InvalidRating = 22,
@@ -128,6 +129,8 @@ pub struct Contract {
     pub refunded_amount: i128,
     pub release_authorization: ReleaseAuthorization,
     pub reputation_issued: bool,
+    /// The deposit mode determines whether funds must be deposited in a single exact total or incrementally.
+    pub deposit_mode: DepositMode,
 }
 
 #[contracttype]
