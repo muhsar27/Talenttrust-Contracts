@@ -32,6 +32,12 @@ stateDiagram-v2
 
 ## Entrypoints
 
+`raise_dispute` and `resolve_dispute` have a single authoritative contract
+entrypoint pair in `contracts/escrow/src/lib.rs`. The dispute module keeps only
+the shared `DisputeResolution`, `resolution_payouts`, and
+`final_status_after_resolution` helpers so every external dispute call passes
+through the same arbiter, status, pause, finalization, and accounting guards.
+
 ### `assign_arbiter`
 
 Assigns an arbiter to a contract that was created without one.
@@ -154,7 +160,9 @@ pub fn resolve_dispute(
 
 **Effects:**
 - Updates `released_amount` and/or `refunded_amount`
+- Verifies `released_amount + refunded_amount == funded_amount`
 - Sets final status (`Completed` or `Refunded`)
+- Adds one pending reputation credit for the freelancer when the resolution completes the contract
 - Emits `(dispute, resolved)` event with resolution code
 
 **Error Codes:**

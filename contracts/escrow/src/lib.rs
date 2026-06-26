@@ -1458,6 +1458,8 @@ impl Escrow {
     /// - Only the assigned arbiter can resolve disputes
     /// - Split amounts must exactly match available balance
     /// - Updates released_amount and refunded_amount atomically
+    /// - Verifies released and refunded accounting consumes the funded balance
+    /// - Adds one pending reputation credit for the freelancer on completion
     /// - Emits dispute resolution event for indexers
     /// - Sets final contract status based on resolution outcome
     pub fn resolve_dispute(
@@ -1500,15 +1502,21 @@ impl Escrow {
         contract.released_amount = safe_add_amounts(contract.released_amount, freelancer_payout)
             .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
 
-        // Assert invariant: funded_amount == released_amount + refunded_amount
-        let invariant = safe_add_amounts(contract.released_amount, contract.refunded_amount)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
-        if invariant != contract.funded_amount {
+        if safe_add_amounts(contract.released_amount, contract.refunded_amount)
+            != Some(contract.funded_amount)
+        {
             env.panic_with_error(EscrowError::AccountingInvariantViolated);
         }
 
         // Set final status
         contract.status = dispute::final_status_after_resolution(&contract);
+        if contract.status == ContractStatus::Completed {
+            let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
+            let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+            let pending = safe_add_amounts(pending, 1)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+            env.storage().persistent().set(&pending_key, &pending);
+        }
 
         env.storage()
             .persistent()
