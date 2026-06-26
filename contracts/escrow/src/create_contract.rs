@@ -20,7 +20,8 @@ use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 /// * `InvalidMilestoneAmount` - If any milestone amount is <= 0
 /// * `MissingArbiter` - If arbiter is required but not provided
 /// * `InvalidArbiter` - If arbiter is same as client or freelancer
-/// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
+/// * `ContractIdOverflow` - If `NextContractId` is already `u32::MAX`; the counter
+///   is never incremented past the ceiling, so no wrap-to-zero collision is possible.
 /// * `ContractIdCollision` - If the allocated id slot is already occupied
 pub fn create_contract_impl(
     env: &Env,
@@ -97,9 +98,15 @@ pub fn create_contract_impl(
         .persistent()
         .set(&(DataKey::Contract(id), milestone_key), &milestone_vec);
 
+    /// Safety: `next_contract_id` already checked that `id < u32::MAX`; the
+    /// `checked_add` here is a defense-in-depth guard. `None` (overflow) is
+    /// unreachable in practice but must be handled to match documented behavior.
+    let next_id = id
+        .checked_add(1)
+        .unwrap_or_else(|| env.panic_with_error(Error::ContractIdOverflow));
     env.storage()
         .persistent()
-        .set(&DataKey::NextContractId, &(id + 1));
+        .set(&DataKey::NextContractId, &next_id);
 
     env.events().publish(
         (symbol_short!("created"), id),
@@ -109,13 +116,28 @@ pub fn create_contract_impl(
     id
 }
 
-/// Returns the next contract id after verifying the slot is unused.
+/// Returns the next contract id after verifying the slot is unused and that
+/// incrementing the counter will not overflow.
+///
+/// # Overflow safety
+/// When `id == u32::MAX` there is no valid successor, so this function panics
+/// with [`Error::ContractIdOverflow`] **before** any state is written. The
+/// counter stored under [`DataKey::NextContractId`] is therefore never advanced
+/// to zero, making wrap-to-zero collisions with existing low-numbered contracts
+/// impossible.
 pub(crate) fn next_contract_id(env: &Env) -> u32 {
     let id: u32 = env
         .storage()
         .persistent()
         .get(&DataKey::NextContractId)
         .unwrap_or(1);
+
+    /// Guard: reject the call before any writes when the counter has reached
+    /// its ceiling. `u32::MAX` cannot be incremented without wrapping, which
+    /// would overwrite contract id 0 on the very next allocation.
+    if id == u32::MAX {
+        env.panic_with_error(Error::ContractIdOverflow);
+    }
 
     if env
         .storage()

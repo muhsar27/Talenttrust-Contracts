@@ -1,6 +1,6 @@
 //! Overflow-safe `NextContractId` allocation tests.
 
-use super::{default_milestones, generated_participants, register_client};
+use super::{default_milestones, register_client};
 use crate::{DataKey, Error, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
@@ -20,14 +20,18 @@ fn assert_error<T: core::fmt::Debug>(
     }
 }
 
+/// Seeding `NextContractId = u32::MAX` must produce `ContractIdOverflow`
+/// and must **not** advance the counter (so no wrap-to-zero can occur).
 #[test]
 fn next_contract_id_overflow_at_u32_max() {
     let env = Env::default();
     env.mock_all_auths();
     let escrow = register_client(&env);
-    let (client_addr, freelancer_addr, _) = generated_participants(&env);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
     let milestones = default_milestones(&env);
 
+    // Seed the counter at the ceiling.
     env.as_contract(&escrow.address, || {
         env.storage()
             .persistent()
@@ -43,22 +47,25 @@ fn next_contract_id_overflow_at_u32_max() {
     );
     assert_error(result, Error::ContractIdOverflow);
 
+    // Counter must remain at u32::MAX — never written past the ceiling.
     env.as_contract(&escrow.address, || {
         let next: u32 = env
             .storage()
             .persistent()
             .get(&DataKey::NextContractId)
             .unwrap();
-        assert_eq!(next, u32::MAX);
+        assert_eq!(next, u32::MAX, "counter must not advance past u32::MAX");
     });
 }
 
+/// An occupied slot must still produce `ContractIdCollision`.
 #[test]
 fn next_contract_id_rejects_occupied_slot() {
     let env = Env::default();
     env.mock_all_auths();
     let escrow = register_client(&env);
-    let (client_addr, freelancer_addr, _) = generated_participants(&env);
+    let client_addr = Address::generate(&env);
+    let freelancer_addr = Address::generate(&env);
     let milestones = default_milestones(&env);
 
     let existing_id = escrow.create_contract(
@@ -69,6 +76,7 @@ fn next_contract_id_rejects_occupied_slot() {
         &ReleaseAuthorization::ClientOnly,
     );
 
+    // Wind the counter back to an already-occupied slot.
     env.as_contract(&escrow.address, || {
         env.storage()
             .persistent()
@@ -84,4 +92,41 @@ fn next_contract_id_rejects_occupied_slot() {
         &ReleaseAuthorization::ClientOnly,
     );
     assert_error(result, Error::ContractIdCollision);
+}
+
+/// Happy-path: the counter advances normally for consecutive allocations.
+#[test]
+fn next_contract_id_increments_normally() {
+    let env = Env::default();
+    env.mock_all_auths();
+    let escrow = register_client(&env);
+    let milestones = default_milestones(&env);
+
+    for expected_id in 1_u32..=3 {
+        let client_addr = Address::generate(&env);
+        let freelancer_addr = Address::generate(&env);
+
+        let id = escrow.create_contract(
+            &client_addr,
+            &freelancer_addr,
+            &None,
+            &milestones,
+            &ReleaseAuthorization::ClientOnly,
+        );
+        assert_eq!(id, expected_id, "contract id should increment by 1 each call");
+
+        // Counter should now point to the next slot.
+        env.as_contract(&escrow.address, || {
+            let next: u32 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::NextContractId)
+                .unwrap();
+            assert_eq!(
+                next,
+                expected_id + 1,
+                "NextContractId should be id+1 after allocation"
+            );
+        });
+    }
 }
