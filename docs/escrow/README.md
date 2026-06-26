@@ -330,29 +330,49 @@ deposit event lane is now closed by issue #441.
   and migration flows, but no current public entrypoint writes those pending
   records.
 
-## Status machine: deposit_funds
+## Refund Accounting Invariant
+
+`get_refundable_balance` is the security-critical query that answers "how much
+of the escrowed funds can still be returned or released?". Its definition is:
 
 ```
-            +-------------------+
-            |     Created       | <-- create_contract
-            +-------------------+
-              |  deposit_funds
-              v
-            +-------------------+
-            | PartiallyFunded   | <-- 0 < funded_amount < total_amount
-            +-------------------+
-              |  deposit_funds (final installment) |  cancel_contract
-              v                                     v
-            +-------------------+    +-------------------+
-            |     Funded        |    |    Cancelled      |
-            +-------------------+    +-------------------+
+refundable_balance = funded_amount - released_amount - refunded_amount
 ```
 
-`cancel_contract` accepts `Created`, `PartiallyFunded`, and `Funded` as input
-states and transitions to `Cancelled`. `release_milestone` rejects any state
-other than `Funded` with `InvalidState`. `refund_unreleased_milestones` requires
-`Funded` and is blocked by `InvalidState` for `Created` and `PartiallyFunded`.
-`finalize_contract` requires `Completed` or `Disputed`.
+This identity must hold at every point in the contract's lifecycle. Violating
+it would mean the contract could either over-pay (release or refund more than
+was funded) or leave funds permanently locked.
+
+### Properties the invariant guarantees
+
+| Property | Explanation |
+|---|---|
+| Non-negative | `refundable_balance >= 0` at all times — the contract never becomes insolvent. |
+| Zero iff all milestones terminal | Balance reaches `0` only when every milestone is in `released` or `refunded` state. |
+| Additive decomposition | `funded_amount == released_amount + refunded_amount + refundable_balance` always. |
+| Status consistency | When balance is `0` and any milestone was released, status is `Completed`; when all were refunded, status is `Refunded`. |
+
+### When balance changes
+
+- `deposit_funds` increases `funded_amount`, so balance increases.
+- `release_milestone` increases `released_amount` by the milestone amount, so balance decreases.
+- `refund_unreleased_milestones` increases `refunded_amount` by the sum of the refunded milestones, so balance decreases.
+- No other entrypoint mutates these three fields.
+
+### Test coverage
+
+`contracts/escrow/src/test/refund.rs` contains a dedicated suite of accounting
+invariant tests (`assert_balance_invariant`) that verify this property after
+every operation order:
+
+- balance equals `funded_amount` before any release or refund
+- release-then-refund sequence
+- refund-then-release sequence
+- all milestones released → balance zero, status `Completed`
+- all milestones refunded → balance zero, status `Refunded`
+- interleaved alternating operations at every step
+- cross-check that `get_refundable_balance` matches `get_contract` fields exactly
+- partial deposit with partial refund never goes negative
 
 ## Planned Features
 

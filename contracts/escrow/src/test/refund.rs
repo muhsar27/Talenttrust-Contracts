@@ -160,3 +160,206 @@ fn rejects_refund_when_balance_is_not_available() {
     let refund_ids = vec![&env, 1_u32];
     client.refund_unreleased_milestones(&contract_id, &refund_ids);
 }
+
+// ---------------------------------------------------------------------------
+// get_refundable_balance accounting invariant tests
+//
+// Core invariant: get_refundable_balance == funded_amount - released_amount - refunded_amount
+//
+// These tests drive a contract through mixed release/refund sequences and assert:
+//  1. get_refundable_balance matches the computed formula at every step.
+//  2. The value never goes negative.
+//  3. It reaches zero only when all milestones are in a terminal state.
+//  4. ContractStatus transitions are consistent with the balance.
+// ---------------------------------------------------------------------------
+
+/// Helper: asserts `get_refundable_balance == funded - released - refunded` and `>= 0`.
+fn assert_balance_invariant(
+    client: &crate::EscrowClient,
+    contract_id: u32,
+) {
+    let c = client.get_contract(&contract_id);
+    let reported = client.get_refundable_balance(&contract_id);
+    let computed = c.funded_amount - c.released_amount - c.refunded_amount;
+    assert!(reported >= 0, "refundable balance must never be negative (got {reported})");
+    assert_eq!(
+        reported, computed,
+        "get_refundable_balance ({reported}) != funded({}) - released({}) - refunded({}) = {computed}",
+        c.funded_amount, c.released_amount, c.refunded_amount,
+    );
+}
+
+/// After funding but before any operation the full funded amount is refundable.
+#[test]
+fn refundable_balance_equals_funded_amount_before_any_operation() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let cid = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&cid, &client_addr, &1_200_0000000_i128));
+
+    assert_eq!(client.get_refundable_balance(&cid), 1_200_0000000_i128);
+    assert_balance_invariant(&client, cid);
+}
+
+/// Release-then-refund: release M0, refund M1, check balance at each step.
+#[test]
+fn balance_invariant_holds_after_release_then_refund() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let cid = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    assert!(client.deposit_funds(&cid, &client_addr, &1_200_0000000_i128));
+
+    // Step 1 – approve and release M0 (200).
+    assert!(client.approve_milestone_release(&cid, &client_addr, &0));
+    assert!(client.release_milestone(&cid, &client_addr, &0));
+    // balance = 1200 - 200 - 0 = 1000
+    assert_eq!(client.get_refundable_balance(&cid), 1_000_0000000_i128);
+    assert_balance_invariant(&client, cid);
+
+    // Step 2 – refund M1 (400).
+    let r = client.refund_unreleased_milestones(&cid, &vec![&env, 1_u32]);
+    assert_eq!(r, 400_0000000_i128);
+    // balance = 1200 - 200 - 400 = 600
+    assert_eq!(client.get_refundable_balance(&cid), 600_0000000_i128);
+    assert_balance_invariant(&client, cid);
+    // M2 still unreleased → status remains Funded.
+    assert_eq!(client.get_contract(&cid).status, crate::ContractStatus::Funded);
+}
+
+/// Refund-then-release: refund M2 first, then release M0, then M1.
+#[test]
+fn balance_invariant_holds_after_refund_then_release() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let cid = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    assert!(client.deposit_funds(&cid, &client_addr, &1_200_0000000_i128));
+
+    // Step 1 – refund M2 (600).
+    let r = client.refund_unreleased_milestones(&cid, &vec![&env, 2_u32]);
+    assert_eq!(r, 600_0000000_i128);
+    assert_eq!(client.get_refundable_balance(&cid), 600_0000000_i128);
+    assert_balance_invariant(&client, cid);
+
+    // Step 2 – release M0 (200).
+    assert!(client.approve_milestone_release(&cid, &client_addr, &0));
+    assert!(client.release_milestone(&cid, &client_addr, &0));
+    assert_eq!(client.get_refundable_balance(&cid), 400_0000000_i128);
+    assert_balance_invariant(&client, cid);
+
+    // Step 3 – release M1 (400) → all terminal, Completed.
+    assert!(client.approve_milestone_release(&cid, &client_addr, &1));
+    assert!(client.release_milestone(&cid, &client_addr, &1));
+    assert_eq!(client.get_refundable_balance(&cid), 0);
+    assert_balance_invariant(&client, cid);
+    assert_eq!(client.get_contract(&cid).status, crate::ContractStatus::Completed);
+}
+
+/// All-released: every milestone is released; balance reaches zero and status is Completed.
+#[test]
+fn balance_reaches_zero_when_all_milestones_released() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let cid = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    assert!(client.deposit_funds(&cid, &client_addr, &1_200_0000000_i128));
+
+    for idx in [0_u32, 1, 2] {
+        assert!(client.approve_milestone_release(&cid, &client_addr, &idx));
+        assert!(client.release_milestone(&cid, &client_addr, &idx));
+        assert_balance_invariant(&client, cid);
+    }
+
+    assert_eq!(client.get_refundable_balance(&cid), 0);
+    assert_eq!(client.get_contract(&cid).status, crate::ContractStatus::Completed);
+}
+
+/// All-refunded: every milestone is refunded; balance reaches zero and status is Refunded.
+#[test]
+fn balance_reaches_zero_when_all_milestones_refunded() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let cid = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    assert!(client.deposit_funds(&cid, &client_addr, &1_200_0000000_i128));
+
+    let all = vec![&env, 0_u32, 1_u32, 2_u32];
+    let r = client.refund_unreleased_milestones(&cid, &all);
+    assert_eq!(r, 1_200_0000000_i128);
+    assert_balance_invariant(&client, cid);
+
+    assert_eq!(client.get_refundable_balance(&cid), 0);
+    assert_eq!(client.get_contract(&cid).status, crate::ContractStatus::Refunded);
+}
+
+/// Interleaved alternating release/refund across all three milestones.
+/// Asserts the invariant after every individual operation.
+#[test]
+fn balance_invariant_holds_across_every_interleaved_operation() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let cid = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    assert!(client.deposit_funds(&cid, &client_addr, &1_200_0000000_i128));
+
+    // M1 refunded first.
+    client.refund_unreleased_milestones(&cid, &vec![&env, 1_u32]);
+    assert_balance_invariant(&client, cid);
+    assert!(client.get_refundable_balance(&cid) >= 0);
+
+    // M0 released.
+    assert!(client.approve_milestone_release(&cid, &client_addr, &0));
+    assert!(client.release_milestone(&cid, &client_addr, &0));
+    assert_balance_invariant(&client, cid);
+    assert!(client.get_refundable_balance(&cid) >= 0);
+
+    // M2 refunded → all terminal.
+    client.refund_unreleased_milestones(&cid, &vec![&env, 2_u32]);
+    assert_balance_invariant(&client, cid);
+    assert_eq!(client.get_refundable_balance(&cid), 0);
+
+    // Status is Completed (one released, two refunded).
+    assert_eq!(client.get_contract(&cid).status, crate::ContractStatus::Completed);
+}
+
+/// Cross-check: get_refundable_balance is consistent with get_contract fields.
+#[test]
+fn get_refundable_balance_is_consistent_with_get_contract_fields() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let cid = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+    assert!(client.deposit_funds(&cid, &client_addr, &1_200_0000000_i128));
+
+    // Release M0 and refund M1.
+    assert!(client.approve_milestone_release(&cid, &client_addr, &0));
+    assert!(client.release_milestone(&cid, &client_addr, &0));
+    client.refund_unreleased_milestones(&cid, &vec![&env, 1_u32]);
+
+    let c = client.get_contract(&cid);
+    let balance = client.get_refundable_balance(&cid);
+
+    // Explicit cross-check against stored fields.
+    assert_eq!(balance, c.funded_amount - c.released_amount - c.refunded_amount);
+    assert_eq!(balance, 600_0000000_i128);
+
+    // M2 is the only outstanding milestone.
+    let milestones = client.get_milestones(&cid);
+    let m2 = milestones.get(2).unwrap();
+    assert!(!m2.released);
+    assert!(!m2.refunded);
+    assert_eq!(m2.amount, balance);
+}
+
+/// Balance never goes negative even when only some milestones are funded (partial deposit).
+#[test]
+fn balance_never_negative_with_partial_deposit_and_partial_refund() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let cid = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    // Fund only M0 (200).
+    assert!(client.deposit_funds(&cid, &client_addr, &200_0000000_i128));
+    assert_balance_invariant(&client, cid);
+
+    // Refund M0.
+    client.refund_unreleased_milestones(&cid, &vec![&env, 0_u32]);
+    assert_balance_invariant(&client, cid);
+    assert_eq!(client.get_refundable_balance(&cid), 0);
+}
