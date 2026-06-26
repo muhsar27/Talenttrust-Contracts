@@ -5,7 +5,11 @@ use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
 
 #[contractimpl]
 impl Escrow {
-    /// Deposits funds into the contract. Transitions to Funded status when fully funded.
+    /// Deposits funds into the contract and allocates them across milestones in order.
+    ///
+    /// Each accepted deposit fills the first underfunded milestone before moving to
+    /// the next one. The aggregate `funded_amount` is still maintained for
+    /// backward-compatible reads.
     ///
     /// # Arguments
     /// * `env` - The contract environment
@@ -20,6 +24,7 @@ impl Escrow {
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `InvalidState` - If contract is not in Created state
     /// * `UnauthorizedRole` - If caller is not the client
+    /// * `FundingExceedsRequired` - If the deposit would exceed the milestone total
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
         if amount <= 0 {
             env.panic_with_error(Error::AmountMustBePositive);
@@ -42,23 +47,62 @@ impl Escrow {
             env.panic_with_error(Error::InvalidState);
         }
 
-        contract.funded_amount += amount;
-
         let milestone_key = Symbol::new(&env, "milestones");
-        let milestones: Vec<Milestone> = env
+        let mut milestones: Vec<Milestone> = env
             .storage()
             .persistent()
-            .get(&(DataKey::Contract(contract_id), milestone_key))
+            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
             .unwrap();
 
         ttl::extend_milestone_ttl(&env, contract_id);
 
         let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
+        let new_funded_amount = contract
+            .funded_amount
+            .checked_add(amount)
+            .unwrap_or_else(|| env.panic_with_error(Error::FundingExceedsRequired));
 
-        if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
+        if new_funded_amount > total_amount {
+            env.panic_with_error(Error::FundingExceedsRequired);
+        }
+
+        let mut remaining = amount;
+        for index in 0..milestones.len() {
+            if remaining == 0 {
+                break;
+            }
+
+            let mut milestone = milestones.get(index).unwrap();
+            let capacity = milestone.amount - milestone.funded_amount;
+            if capacity <= 0 {
+                continue;
+            }
+
+            let allocation = if remaining < capacity {
+                remaining
+            } else {
+                capacity
+            };
+
+            milestone.funded_amount += allocation;
+            milestones.set(index, milestone);
+            remaining -= allocation;
+        }
+
+        if remaining > 0 {
+            env.panic_with_error(Error::FundingExceedsRequired);
+        }
+
+        contract.funded_amount = new_funded_amount;
+
+        if contract.funded_amount == total_amount && contract.status == ContractStatus::Created {
             contract.status = ContractStatus::Funded;
         }
 
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);

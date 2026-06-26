@@ -7,12 +7,13 @@ use crate::{Escrow, EscrowClient, EscrowError, ReleaseAuthorization};
 
 // --- Submodules ---
 
+mod client_migration;
+mod deposit;
 mod emergency_controls;
 mod pause_controls;
 mod persistence;
-mod reputation;
 mod release_authorization;
-mod client_migration;
+mod reputation;
 
 // --- Shared constants ---
 

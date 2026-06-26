@@ -8,6 +8,9 @@ use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
 impl Escrow {
     /// Releases a specific milestone, transferring funds to the freelancer.
     ///
+    /// The target milestone must be fully funded through per-milestone deposit
+    /// allocation before it can be released.
+    ///
     /// Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
     ///
     /// # Arguments
@@ -25,7 +28,7 @@ impl Escrow {
     /// * `InvalidMilestone` - If milestone index is out of bounds
     /// * `AlreadyReleased` - If milestone was already released
     /// * `AlreadyRefunded` - If milestone was already refunded
-    /// * `InsufficientFunds` - If contract doesn't have enough funded balance
+    /// * `InsufficientFunds` - If the milestone or aggregate contract balance is underfunded
     /// * `InsufficientApprovals` - If required approvals are missing
     /// * `ApprovalExpired` - If approvals have expired
     /// * `UnauthorizedRole` - If caller is not authorized to release
@@ -107,6 +110,10 @@ impl Escrow {
 
         if milestone.refunded {
             env.panic_with_error(Error::AlreadyRefunded);
+        }
+
+        if milestone.funded_amount < milestone.amount {
+            env.panic_with_error(Error::InsufficientFunds);
         }
 
         let available_balance =
