@@ -40,6 +40,7 @@ impl Escrow {
         caller: Address,
         milestone_index: u32,
     ) -> bool {
+        Self::require_not_paused(&env);
         caller.require_auth();
 
         let mut contract: Contract = env
@@ -143,9 +144,7 @@ impl Escrow {
             contract.status = ContractStatus::Completed;
             let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
             let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
-            env.storage()
-                .persistent()
-                .set(&pending_key, &(pending + 1));
+            env.storage().persistent().set(&pending_key, &(pending + 1));
         }
 
         env.storage().persistent().set(

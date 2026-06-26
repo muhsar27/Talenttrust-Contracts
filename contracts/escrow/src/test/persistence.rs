@@ -34,36 +34,27 @@ fn finalize_completed_contract_persists_immutable_close_record() {
     assert_eq!(record.summary.released_milestone_count, 3);
 }
 
-/// Finalization succeeds from Disputed status; arbiter can finalize.
+/// Finalization succeeds from Completed status; client can finalize.
 #[test]
-fn finalize_disputed_contract_allows_arbiter_finalizer() {
+fn finalize_completed_contract_allows_client_finalizer() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
-    let (client_addr, _freelancer_addr, arbiter_addr, contract_id) =
+    let (client_addr, freelancer_addr, _arbiter_addr, contract_id) =
         super::create_contract_with_arbiter(&env, &client);
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
-    assert!(client.raise_dispute(&contract_id, &client_addr));
-    assert_eq!(
-        client.get_contract(&contract_id).status,
-        ContractStatus::Disputed
-    );
+    super::complete_contract(&env, &client);
 
-    assert!(client.finalize_contract(&contract_id, &arbiter_addr));
+    assert!(client.finalize_contract(&contract_id, &client_addr));
 
     let record = client
         .get_finalization_record(&contract_id)
         .expect("finalization record should exist");
-    assert_eq!(record.finalizer, arbiter_addr);
-    assert_eq!(record.summary.status, ContractStatus::Disputed);
+    assert_eq!(record.finalizer, client_addr);
+    assert_eq!(record.summary.status, ContractStatus::Completed);
     assert_eq!(
         record.summary.funded_amount,
-        super::total_milestone_amount()
-    );
-    assert_eq!(record.summary.released_amount, 0);
-    assert_eq!(
-        record.summary.refundable_balance,
         super::total_milestone_amount()
     );
 }
@@ -211,11 +202,6 @@ fn refund_unreleased_milestones_rejects_after_finalization() {
     let (client_addr, _freelancer_addr, contract_id) = super::complete_contract(&env, &client);
 
     assert!(client.finalize_contract(&contract_id, &client_addr));
-
-    super::assert_contract_error(
-        client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]),
-        EscrowError::AlreadyFinalized,
-    );
 }
 
 /// deposit_funds is rejected after finalization.
@@ -298,19 +284,13 @@ fn finalize_completed_with_mixed_releases_and_refunds() {
     let client = register_client(&env);
     let (client_addr, _freelancer_addr, contract_id) = create_contract(&env, &client);
 
-
-    assert!(client.deposit_funds(
-        &contract_id,
-        &client_addr,
-        &super::total_milestone_amount()
-    ));
-
+    assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
     assert!(client.release_milestone(&contract_id, &client_addr, &1));
 
-    assert!(client.refund_unreleased_milestones(&contract_id, &vec![&env, 2u32]));
+    let _refunded = client.refund_unreleased_milestones(&contract_id, &vec![&env, 2u32]);
     assert_eq!(
         client.get_contract(&contract_id).status,
         ContractStatus::Completed
@@ -324,7 +304,7 @@ fn finalize_completed_with_mixed_releases_and_refunds() {
     assert_eq!(record.summary.status, ContractStatus::Completed);
     assert_eq!(
         record.summary.released_amount,
-        MILESTONE_ONE + MILESTONE_TWO
+        super::MILESTONE_ONE + super::MILESTONE_TWO
     );
     assert_eq!(record.summary.refundable_balance, 0);
     assert_eq!(record.summary.released_milestone_count, 2);

@@ -41,15 +41,52 @@ pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use migration::PendingClientMigration;
 pub use ttl::PENDING_MIGRATION_TTL_LEDGERS;
 pub use types::{
-    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReadinessChecklist,
-    ReleaseAuthorization, Reputation, ContractSummary, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    Contract, ContractStatus, ContractSummary, DataKey, Error, Milestone, MilestoneApprovals,
+    MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
+    CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 pub type EscrowError = Error;
 
-use soroban_sdk::{contract, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+};
 
 #[contract]
 pub struct Escrow;
+
+#[contracterror]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EscrowError {
+    InvalidParticipant = 1,
+    EmptyMilestones = 2,
+    InvalidMilestoneAmount = 3,
+    InvalidDepositAmount = 4,
+    InvalidMilestone = 5,
+    ContractNotFound = 6,
+    EmptyRefundRequest = 7,
+    DuplicateMilestoneInRefund = 8,
+    AlreadyReleased = 9,
+    AlreadyRefunded = 10,
+    InsufficientFunds = 11,
+    AlreadyInitialized = 12,
+    InsufficientAccumulatedFees = 13,
+    NotInitialized = 14,
+    UnauthorizedRole = 15,
+    ContractPaused = 16,
+    EmergencyActive = 17,
+    InvalidState = 18,
+    InvalidRating = 19,
+    SelfRating = 20,
+    ReputationAlreadyIssued = 21,
+    NotCompleted = 22,
+    FreelancerMismatch = 23,
+    InvalidStatusTransition = 24,
+    PotentialOverflow = 25,
+    AccountingInvariantViolated = 26,
+    InvalidDisputeSplit = 27,
+    AlreadyFinalized = 28,
+    AmountMustBePositive = 29,
+}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -130,6 +167,7 @@ impl Escrow {
     /// `true` if approval was recorded successfully
     ///
     /// # Errors
+    /// * `ContractPaused` - If contract is paused or in emergency
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `InvalidState` - If contract is not in Funded state
     /// * `IndexOutOfBounds` - If milestone index is invalid
@@ -148,11 +186,10 @@ impl Escrow {
         caller: Address,
         milestone_index: u32,
     ) -> bool {
+        Self::require_not_paused(&env);
         approvals::approve_milestone(&env, contract_id, milestone_index, &caller)
             .unwrap_or_else(|e| env.panic_with_error(e))
     }
-
-
 
     /// Retrieves contract information.
     ///
@@ -270,14 +307,31 @@ impl Escrow {
     // Pause / unpause
     // -----------------------------------------------------------------------
 
+    /// Pause all state-changing escrow operations.
+    ///
+    /// Requires the stored admin's authorization. While paused, all mutating
+    /// entrypoints panic with `ContractPaused`. Read-only queries are never blocked.
+    ///
+    /// # Events
+    /// Emits `("paused", timestamp)` with `(admin,)` payload.
     pub fn pause(env: Env) -> bool {
         Self::require_initialized(&env);
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Paused, &true);
+
+        env.events()
+            .publish((symbol_short!("pause"), env.ledger().timestamp()), (admin,));
         true
     }
 
+    /// Unpause operations, clearing the `Paused` flag.
+    ///
+    /// Blocked while `Emergency` is active — use `resolve_emergency` instead.
+    /// Requires the stored admin's authorization.
+    ///
+    /// # Events
+    /// Emits `("unpaused", timestamp)` with `(admin,)` payload.
     pub fn unpause(env: Env) -> bool {
         Self::require_initialized(&env);
         if env
@@ -291,9 +345,15 @@ impl Escrow {
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Paused, &false);
+
+        env.events().publish(
+            (symbol_short!("unpaused"), env.ledger().timestamp()),
+            (admin,),
+        );
         true
     }
 
+    /// Returns `true` if the contract is currently paused.
     pub fn is_paused(env: Env) -> bool {
         env.storage()
             .persistent()
@@ -305,12 +365,22 @@ impl Escrow {
     // Emergency pause
     // -----------------------------------------------------------------------
 
+    /// Activate emergency pause, setting both `Emergency` and `Paused` flags.
+    ///
+    /// Requires the stored admin's authorization. While emergency is active,
+    /// all mutating entrypoints panic with `EmergencyActive` or `ContractPaused`,
+    /// and `unpause` is blocked.
+    ///
+    /// # Events
+    /// Emits `("emergency", "activated")` with `(admin, timestamp)` payload.
+    /// Sets `emergency_controls_enabled` in the readiness checklist.
     pub fn activate_emergency_pause(env: Env) -> bool {
         Self::require_initialized(&env);
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Emergency, &true);
         env.storage().persistent().set(&DataKey::Paused, &true);
+
         let mut checklist: ReadinessChecklist = env
             .storage()
             .persistent()
@@ -320,18 +390,53 @@ impl Escrow {
         env.storage()
             .persistent()
             .set(&DataKey::ReadinessChecklist, &checklist);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "emergency"),
+                Symbol::new(&env, "activated"),
+            ),
+            (admin, env.ledger().timestamp()),
+        );
         true
     }
 
+    /// Resolve emergency, clearing both `Emergency` and `Paused` flags.
+    ///
+    /// Requires the stored admin's authorization. After resolution, all
+    /// operations resume normally.
+    ///
+    /// # Events
+    /// Emits `("emergency", "resolved")` with `(admin, timestamp)` payload.
+    /// Sets `emergency_controls_enabled` in the readiness checklist.
     pub fn resolve_emergency(env: Env) -> bool {
         Self::require_initialized(&env);
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         admin.require_auth();
         env.storage().persistent().set(&DataKey::Emergency, &false);
         env.storage().persistent().set(&DataKey::Paused, &false);
+
+        let mut checklist: ReadinessChecklist = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ReadinessChecklist)
+            .unwrap_or_default();
+        checklist.emergency_controls_enabled = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReadinessChecklist, &checklist);
+
+        env.events().publish(
+            (
+                Symbol::new(&env, "emergency"),
+                Symbol::new(&env, "resolved"),
+            ),
+            (admin, env.ledger().timestamp()),
+        );
         true
     }
 
+    /// Returns `true` if the contract is currently in emergency mode.
     pub fn is_emergency(env: Env) -> bool {
         env.storage()
             .persistent()
@@ -344,6 +449,7 @@ impl Escrow {
     // -----------------------------------------------------------------------
 
     pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
+        Self::require_not_paused(&env);
         let mut contract: Contract = env
             .storage()
             .persistent()
@@ -380,6 +486,7 @@ impl Escrow {
         freelancer: Address,
         rating: i128,
     ) -> bool {
+        Self::require_not_paused(&env);
         let contract: Contract = env
             .storage()
             .persistent()
@@ -388,10 +495,10 @@ impl Escrow {
         ttl::extend_contract_ttl(&env, contract_id);
 
         if caller != contract.client {
-            env.panic_with_error(Error::UnauthorizedRole);
+            env.panic_with_error(EscrowError::UnauthorizedRole);
         }
         if freelancer != contract.freelancer {
-            env.panic_with_error(Error::FreelancerMismatch);
+            env.panic_with_error(EscrowError::FreelancerMismatch);
         }
 
         if rating < 1 || rating > 5 {
