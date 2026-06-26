@@ -39,12 +39,7 @@ impl Escrow {
         milestones: Vec<i128>,
         release_authorization: ReleaseAuthorization,
     ) -> u32 {
-        // Pause/emergency gate: refuse new contract creation while the
-        // contract-level pause switch is active or emergency mode is on.
-        // Runs BEFORE any other state read or auth so funds cannot be
-        // re-allocated while paused.
         Self::require_not_paused(&env);
-
         client.require_auth();
 
         if client == freelancer {

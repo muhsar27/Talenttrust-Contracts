@@ -35,20 +35,22 @@ mod refund;
 mod release;
 mod ttl;
 mod types;
+mod amount_validation;
 mod utils;
+
+
 
 pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 pub use types::{
-    Contract, ContractStatus, CONTRACT_SUMMARY_SCHEMA_VERSION, ContractSummary, DataKey,
-    DepositMode, Error, GovernedParameters, MAINNET_MAX_TOTAL_ESCROW_PER_CONTRACT_STROOPS,
-    MAINNET_PROTOCOL_VERSION, Milestone, MilestoneApprovals, MilestoneSummary, PendingAdminProposal,
-    ReadinessChecklist, ReleaseAuthorization, Reputation,
+    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReadinessChecklist,
+    ReleaseAuthorization, Reputation, ContractSummary, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    GovernedParameters,
 };
-pub use types::{ContractSummary, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION};
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 
-use soroban_sdk::{contract, contractimpl, contracterror, contracttype, symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, symbol_short, Address, Env, Symbol, Vec};
 
 #[contract]
 pub struct Escrow;
@@ -87,12 +89,13 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-    AlreadyFinalized = 25,
-    InvalidProtocolParameters = 26,
-    GovernanceNotInitialized = 27,
-    PotentialOverflow = 28,
-    AccountingInvariantViolated = 29,
-    TimelockNotElapsed = 30,
+    InvalidProtocolParameters = 25,
+    AccountingInvariantViolated = 26,
+    AlreadyFinalized = 27,
+    ArbiterRequired = 28,
+    InvalidDisputeSplit = 29,
+    PotentialOverflow = 30,
+    AmountMustBePositive = 31,
 }
 
 /// Returns `Some(a - b)` when `a >= b`, otherwise `None`.
@@ -166,40 +169,25 @@ impl Escrow {
         env.storage().persistent().get(&DataKey::Admin)
     }
 
-    /// Bind the SAC settlement token used by `deposit_funds` and
-    /// `release_milestone`. Single-use: the first call after `initialize`
-    /// stores the token address; subsequent calls panic with
-    /// `SettlementTokenAlreadyBound`.
+    /// Returns the current mainnet readiness checklist.
     ///
-    /// # Arguments
-    /// * `env`  - The contract environment
-    /// * `token` - The Stellar Asset Contract address that all escrowed
-    ///              funds will be denominated in.
+    /// The checklist tracks critical configuration steps that must be completed
+    /// before the escrow contract is considered ready for mainnet production:
     ///
-    /// # Returns
-    /// `true` on a successful binding.
+    /// - **`initialized`**: Flipped to `true` when `initialize` completes successfully.
+    ///   Ensures that an admin has been bound to the contract.
+    /// - **`governed_params_set`**: Flipped to `true` when governance/protocol parameters
+    ///   (such as fees and maximum caps) are configured. Flipped during `initialize_protocol_governance`
+    ///   or parameter updates.
+    /// - **`emergency_controls_enabled`**: Flipped to `true` when emergency pause controls are exercised
+    ///   for the first time (via `activate_emergency_pause`). This verifies the operator has functioning
+    ///   emergency access.
     ///
-    /// # Errors
-    /// * `NotInitialized` - if `initialize` has never been called.
-    /// * `UnauthorizedRole` - if the caller is not the stored admin.
-    /// * `SettlementTokenAlreadyBound` - if a token has already been bound.
-    ///
-    /// # Security
-    /// * Token binding is single-use, gated to the admin, and audited via
-    ///   the `(settl_tok, "bound")` event so an observer can prove the
-    ///   binding sequence.
-    pub fn bind_settlement_token(env: Env, token: Address) -> bool {
-        Self::require_initialized(&env);
-        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-        admin.require_auth();
-        if env
-            .storage()
-            .persistent()
-            .get::<_, Address>(&DataKey::SettlementToken)
-            .is_some()
-        {
-            env.panic_with_error(EscrowError::SettlementTokenAlreadyBound);
-        }
+    /// # Implications for a Clean Deploy
+    /// Activating the emergency pause to flip the `emergency_controls_enabled` flag leaves the contract
+    /// in a paused state. To complete a clean deploy and allow normal operations, the operator must
+    /// subsequently call `resolve_emergency` to unpause the contract.
+    pub fn get_mainnet_readiness_info(env: Env) -> ReadinessChecklist {
         env.storage()
             .persistent()
             .set(&DataKey::SettlementToken, &token);
@@ -250,13 +238,16 @@ impl Escrow {
             .unwrap_or_else(|e| env.panic_with_error(e))
     }
 
+
     /// Retrieves contract information.
     pub fn get_contract(env: Env, contract_id: u32) -> Contract {
         let contract = env
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        // Extend TTL on contract read
         ttl::extend_contract_ttl(&env, contract_id);
         contract
     }
@@ -435,7 +426,24 @@ impl Escrow {
         true
     }
 
-    /// Returns `true` if the contract is currently in emergency mode.
+    pub fn resolve_emergency(env: Env) -> bool {
+        Self::require_initialized(&env);
+        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        env.storage().persistent().set(&DataKey::Emergency, &false);
+        env.storage().persistent().set(&DataKey::Paused, &false);
+        let mut checklist: ReadinessChecklist = env
+            .storage()
+            .persistent()
+            .get(&DataKey::ReadinessChecklist)
+            .unwrap_or_default();
+        checklist.emergency_controls_enabled = true;
+        env.storage()
+            .persistent()
+            .set(&DataKey::ReadinessChecklist, &checklist);
+        true
+    }
+
     pub fn is_emergency(env: Env) -> bool {
         env.storage()
             .persistent()
@@ -458,12 +466,7 @@ impl Escrow {
     /// * Pause/emergency gate runs BEFORE contract state read so a paused
     ///   contract cannot have its cancellation path tread on the record.
     pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
-        // Pause/emergency gate: refuses cancellation while the contract is
-        // paused or in an active emergency. Runs BEFORE state read so a
-        // paused contract cannot have its cancellation path tread on the
-        // contract record at all.
         Self::require_not_paused(&env);
-
         let mut contract: Contract = env
             .storage()
             .persistent()
@@ -523,8 +526,19 @@ impl Escrow {
             .storage()
             .persistent()
             .get(&DataKey::Contract(contract_id))
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
         ttl::extend_contract_ttl(&env, contract_id);
+
+        if caller != contract.client {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+        if freelancer != contract.freelancer {
+            env.panic_with_error(EscrowError::FreelancerMismatch);
+        }
+
+        if rating < 1 || rating > 5 {
+            env.panic_with_error(EscrowError::InvalidRating);
+        }
 
         if contract.status != ContractStatus::Completed {
             env.panic_with_error(EscrowError::NotCompleted);

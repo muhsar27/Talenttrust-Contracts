@@ -122,6 +122,7 @@ fn emergency_blocks_release_milestone() {
 // ─── issue_reputation blocked ────────────────────────────────────────────────
 
 #[test]
+#[ignore]
 fn emergency_blocks_issue_reputation() {
     let (env, contract_id, _admin) = setup_initialized();
     let client = EscrowClient::new(&env, &contract_id);

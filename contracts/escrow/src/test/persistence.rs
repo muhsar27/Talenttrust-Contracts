@@ -218,13 +218,13 @@ fn refund_unreleased_milestones_rejects_after_finalization() {
 
     assert!(client.finalize_contract(&contract_id, &client_addr));
 
-    let result = client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]);
-    let err = result.expect_err("expected contract panic");
-    let actual = err.expect("expected Ok(Error), got InvokeError");
-    assert_eq!(
-        actual,
-        soroban_sdk::Error::from(EscrowError::AlreadyFinalized)
-    );
+    let res = client.try_refund_unreleased_milestones(&contract_id, &vec![&env, 0u32]);
+    match res {
+        Err(Ok(e)) => {
+            assert_eq!(e, soroban_sdk::Error::from(EscrowError::AlreadyFinalized));
+        }
+        _ => panic!("expected contract error AlreadyFinalized"),
+    }
 }
 
 /// deposit_funds is rejected after finalization.

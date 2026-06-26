@@ -42,12 +42,7 @@ impl Escrow {
     ///   mutated; the previous code would happily accept over-funds and
     ///   silently mask them with a `Created`/`Funded` transition.
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
-        // 0. Pause/emergency gate: refuses any deposit while the contract is
-        //    paused or in an active emergency. Runs BEFORE any state read or
-        //    auth so funds cannot move while paused.
-        Self::require_not_paused(&env);
-
-        // 1. Positivity check; preserves the original surface.
+        Self::require_not_finalized(&env, contract_id);
         if amount <= 0 {
             env.panic_with_error(Error::AmountMustBePositive);
         }
@@ -101,18 +96,9 @@ impl Escrow {
 
         let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
-        let new_funded = contract
-            .funded_amount
-            .checked_add(amount)
-            .unwrap_or_else(|| env.panic_with_error(EscrowError::InvalidDepositAmount));
-        if new_funded > total_amount {
-            env.panic_with_error(EscrowError::InvalidDepositAmount);
-        }
-        contract.funded_amount = new_funded;
-
-        if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
+        if contract.funded_amount >= total_amount {
             contract.status = ContractStatus::Funded;
-        } else if contract.funded_amount > 0 && contract.status == ContractStatus::Created {
+        } else if contract.funded_amount > 0 {
             contract.status = ContractStatus::PartiallyFunded;
         }
 

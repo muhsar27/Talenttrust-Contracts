@@ -1,9 +1,114 @@
 use soroban_sdk::{contractimpl, contracttype, Address, Env};
 
 use crate::{
-    safe_add_amounts, Contract, ContractStatus, DataKey, Escrow, EscrowArgs, EscrowClient,
-    EscrowError,
+    safe_add_amounts, Contract, ContractStatus, EscrowError, Escrow, EscrowClient, EscrowArgs, DataKey
 };
+use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
+
+#[contractimpl]
+impl Escrow {
+    /// Raise a dispute on a funded escrow. Only the client or freelancer may call this.
+    pub fn raise_dispute(env: Env, contract_id: u32, caller: Address) -> bool {
+        if env.storage().persistent().get::<_, bool>(&DataKey::Paused).unwrap_or(false) {
+            env.panic_with_error(EscrowError::ContractPaused);
+        }
+        caller.require_auth();
+
+        let key = DataKey::Contract(contract_id);
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        if caller != contract.client && caller != contract.freelancer {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+        if contract.arbiter.is_none() {
+            env.panic_with_error(EscrowError::ArbiterRequired);
+        }
+        if contract.status != ContractStatus::Funded
+            && contract.status != ContractStatus::PartiallyFunded
+        {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+
+        let old_status = contract.status;
+        contract.status = ContractStatus::Disputed;
+
+        env.storage().persistent().set(&key, &contract);
+
+        env.events().publish(
+            (symbol_short!("dispute"), contract_id),
+            (caller, env.ledger().timestamp()),
+        );
+        true
+    }
+
+    /// Resolve a disputed escrow and distribute the remaining balance according to the resolution.
+    pub fn resolve_dispute(
+        env: Env,
+        contract_id: u32,
+        arbiter: Address,
+        resolution: DisputeResolution,
+    ) -> bool {
+        if env.storage().persistent().get::<_, bool>(&DataKey::Paused).unwrap_or(false) {
+            env.panic_with_error(EscrowError::ContractPaused);
+        }
+        arbiter.require_auth();
+
+        let key = DataKey::Contract(contract_id);
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::ContractNotFound));
+
+        if contract.status != ContractStatus::Disputed {
+            env.panic_with_error(EscrowError::InvalidStatusTransition);
+        }
+        if contract.arbiter.clone() != Some(arbiter.clone()) {
+            env.panic_with_error(EscrowError::UnauthorizedRole);
+        }
+
+        let old_status = contract.status;
+        let (client_payout, freelancer_payout) =
+            resolution_payouts(&contract, &resolution)
+                .unwrap_or_else(|err| env.panic_with_error(err));
+
+        contract.refunded_amount = safe_add_amounts(contract.refunded_amount, client_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+        contract.released_amount = safe_add_amounts(contract.released_amount, freelancer_payout)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow));
+
+        if safe_add_amounts(contract.released_amount, contract.refunded_amount)
+            != Some(contract.funded_amount)
+        {
+            env.panic_with_error(EscrowError::AccountingInvariantViolated);
+        }
+
+        contract.status = final_status_after_resolution(&contract);
+        if contract.status == ContractStatus::Completed {
+            let pending_key = DataKey::PendingReputationCredits(contract.freelancer.clone());
+            let pending: i128 = env.storage().persistent().get(&pending_key).unwrap_or(0);
+            env.storage().persistent().set(&pending_key, &(pending + 1));
+        }
+
+        env.storage().persistent().set(&key, &contract);
+
+        env.events().publish(
+            (symbol_short!("dsp_res"), contract_id),
+            (
+                arbiter,
+                resolution.code(),
+                client_payout,
+                freelancer_payout,
+                env.ledger().timestamp(),
+            ),
+        );
+        true
+    }
+}
 
 /// Resolution selected by the assigned arbiter for a disputed escrow.
 #[contracttype]

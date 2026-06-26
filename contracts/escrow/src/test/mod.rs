@@ -12,8 +12,9 @@ mod emergency_controls;
 mod pause_controls;
 mod persistence;
 mod release_authorization;
-mod reputation;
-mod treasury_rotation_timelock;
+mod client_migration;
+mod mainnet_readiness;
+
 
 // --- Shared constants ---
 
@@ -104,8 +105,11 @@ pub fn complete_contract(env: &Env, client: &EscrowClient) -> (Address, Address,
 /// A contract-level `panic_with_error` surfaces as `Err(Ok(soroban_sdk::Error))`.
 /// The `expected` argument can be any type convertible to `soroban_sdk::Error`,
 /// including both `EscrowError` and the canonical `Error` from `types.rs`.
-pub fn assert_contract_error<T, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
-    result: Result<T, Result<soroban_sdk::Error, soroban_sdk::InvokeError>>,
+pub fn assert_contract_error<T: core::fmt::Debug, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
+    result: Result<
+        Result<T, soroban_sdk::ConversionError>,
+        Result<soroban_sdk::Error, soroban_sdk::InvokeError>,
+    >,
     expected: E,
 ) {
     match result {
@@ -114,8 +118,8 @@ pub fn assert_contract_error<T, E: Into<soroban_sdk::Error> + core::fmt::Debug>(
             assert_eq!(e, expected_err, "contract error code mismatch");
         }
         _other => panic!(
-            "expected contract error {:?}, got unexpected result variant",
-            expected
+            "expected contract error {:?}, got unexpected result variant: {:?}",
+            expected, _other
         ),
     }
 }

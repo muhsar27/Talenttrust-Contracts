@@ -1,15 +1,5 @@
 use soroban_sdk::{contracterror, contracttype, Address, String, Vec};
 
-/// Pending treasury/admin rotation proposal, stored under [`DataKey::PendingAdmin`].
-///
-/// Captures the proposed new admin and the ledger at which the proposal was
-/// made so that `accept_governance_admin` can enforce `ADMIN_ROTATION_MIN_DELAY_LEDGERS`.
-#[contracttype]
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PendingAdminProposal {
-    pub proposed: Address,
-    pub proposed_at_ledger: u32,
-}
 
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]

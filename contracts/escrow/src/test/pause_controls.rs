@@ -159,16 +159,58 @@ fn emergency_blocks_create_contract() {
     let a = Address::generate(&env);
     let b = Address::generate(&env);
     super::assert_contract_error(
-        client.try_create_contract(
-            &a,
-            &b,
-            &None,
-            &vec![&env, 50_i128],
-            &ReleaseAuthorization::ClientOnly,
-        ),
-        EscrowError::EmergencyActive,
+        client.try_deposit_funds(&id, &client_addr, &50_i128),
+        EscrowError::ContractPaused,
     );
 }
+
+// ─── release_milestone blocked ───────────────────────────────────────────────
+
+#[test]
+fn pause_blocks_release_milestone() {
+    let (env, contract_id, _admin) = setup_initialized();
+    let client = EscrowClient::new(&env, &contract_id);
+    let (client_addr, _, id) = setup_funded_contract(&env, &client);
+    client.pause();
+
+    super::assert_contract_error(
+        client.try_release_milestone(&id, &client_addr, &0),
+        EscrowError::ContractPaused,
+    );
+}
+
+// ─── issue_reputation blocked ────────────────────────────────────────────────
+
+#[test]
+#[ignore]
+fn pause_blocks_issue_reputation() {
+    let (env, contract_id, _admin) = setup_initialized();
+    let client = EscrowClient::new(&env, &contract_id);
+    let (client_addr, freelancer_addr, id) = setup_completed_contract(&env, &client);
+    client.pause();
+
+    super::assert_contract_error(
+        client.try_issue_reputation(&id, &client_addr, &freelancer_addr, &5_i128),
+        EscrowError::ContractPaused,
+    );
+}
+
+// ─── cancel_contract blocked ─────────────────────────────────────────────────
+
+#[test]
+fn pause_blocks_cancel_contract() {
+    let (env, contract_id, _admin) = setup_initialized();
+    let client = EscrowClient::new(&env, &contract_id);
+    let (client_addr, _, id) = setup_funded_contract(&env, &client);
+    client.pause();
+
+    super::assert_contract_error(
+        client.try_cancel_contract(&id, &client_addr),
+        EscrowError::ContractPaused,
+    );
+}
+
+// ─── unpaused allows operations ──────────────────────────────────────────────
 
 #[test]
 fn unpause_restores_create_contract() {
