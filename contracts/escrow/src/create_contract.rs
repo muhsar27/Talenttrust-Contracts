@@ -6,17 +6,45 @@ use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 impl Escrow {
     /// Core logic for creating a new escrow contract.
     ///
-    /// Called from the single `#[contractimpl]` block in lib.rs after the
-    /// initialization and pause guards have been checked.
-    pub(crate) fn create_contract_impl(
-        env: &Env,
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `client` - The address of the client funding the contract
+    /// * `freelancer` - The address of the freelancer performing the work
+    /// * `arbiter` - Optional arbiter address for dispute resolution
+    /// * `milestones` - Vector of milestone amounts (in stroops)
+    /// * `release_authorization` - Authorization mode for milestone releases
+    ///
+    /// # Returns
+    /// The unique contract ID
+    ///
+    /// # Errors
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
+    /// * `InvalidParticipants` - If client and freelancer are the same address
+    /// * `EmptyMilestones` - If no milestones are provided
+    /// * `InvalidMilestoneAmount` - If any milestone amount is <= 0
+    /// * `MissingArbiter` - If arbiter is required but not provided
+    /// * `InvalidArbiter` - If arbiter is same as client or freelancer
+    /// * `ContractIdOverflow` - If the next id would exceed `u32::MAX`
+    /// * `ContractIdCollision` - If the allocated id slot is already occupied
+    ///
+    /// # Security
+    /// * Pause/emergency gate runs BEFORE any other state read or auth so
+    ///   funds cannot be re-allocated while the contract is paused.
+    pub fn create_contract(
+        env: Env,
         client: Address,
         freelancer: Address,
         arbiter: Option<Address>,
         milestones: Vec<i128>,
         release_authorization: ReleaseAuthorization,
     ) -> u32 {
+        // Pause/emergency gate: refuse new contract creation while the
+        // contract-level pause switch is active or emergency mode is on.
+        // Runs BEFORE any other state read or auth so funds cannot be
+        // re-allocated while paused.
         Self::require_not_paused(&env);
+
         client.require_auth();
 
         if client == freelancer {
@@ -49,12 +77,7 @@ impl Escrow {
 
         let id = next_contract_id(env);
 
-        // Write the counter before extending its TTL — extend_ttl panics if the key
-        // has never been written.
-        env.storage()
-            .persistent()
-            .set(&DataKey::NextContractId, &(id + 1));
-        ttl::extend_next_contract_id_ttl(env);
+        ttl::extend_next_contract_id_ttl(&env);
 
         let freelancer_addr = freelancer.clone();
         let contract = Contract {

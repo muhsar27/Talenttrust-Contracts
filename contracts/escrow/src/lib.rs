@@ -197,85 +197,178 @@ impl Escrow {
             .unwrap_or_else(|e| env.panic_with_error(e))
     }
 
-    // ── Lifecycle entrypoints ────────────────────────────────────────────────
-
-    /// Creates a new escrow contract.
-    ///
-    /// # Security
-    /// Requires initialization so admin-controlled safety rails (pause,
-    /// emergency controls, protocol fees) are bound before any contract can
-    /// be created or funded.
-    ///
-    /// # Errors
-    /// * `NotInitialized` - If the contract has not been initialized
-    /// * `ContractPaused` - If the contract is paused or in emergency mode
-    /// * `InvalidParticipants` - If client and freelancer are the same address
-    /// * `EmptyMilestones` - If no milestones are provided
-    /// * `InvalidMilestoneAmount` - If any milestone amount is ≤ 0
-    /// * `MissingArbiter` - If arbiter mode requires an arbiter but none is given
-    /// * `InvalidArbiter` - If arbiter matches client or freelancer
-    pub fn create_contract(
-        env: Env,
-        client: Address,
-        freelancer: Address,
-        arbiter: Option<Address>,
-        milestones: Vec<i128>,
-        release_authorization: ReleaseAuthorization,
-    ) -> u32 {
-        Self::require_initialized(&env);
-        Self::require_not_paused(&env);
-        Self::create_contract_impl(
-            &env,
-            client,
-            freelancer,
-            arbiter,
-            milestones,
-            release_authorization,
-        )
-    }
-
-    /// Deposits funds into the contract.
-    ///
-    /// # Security
-    /// Requires initialization so admin-controlled safety rails are bound
-    /// before any funds can enter the escrow.
-    ///
-    /// # Errors
-    /// * `NotInitialized` - If the contract has not been initialized
-    /// * `ContractPaused` - If the contract is paused or in emergency mode
-    /// * `AmountMustBePositive` - If amount is ≤ 0
-    /// * `ContractNotFound` - If contract doesn't exist
-    /// * `InvalidState` - If contract is not in Created state
-    /// * `UnauthorizedRole` - If caller is not the client
-    pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
-        Self::require_initialized(&env);
-        Self::require_not_paused(&env);
-        Self::require_not_finalized(&env, contract_id);
-        Self::deposit_funds_impl(&env, contract_id, caller, amount)
-    }
-
     /// Releases a specific milestone, transferring funds to the freelancer.
     ///
-    /// # Security
-    /// Requires initialization so admin-controlled safety rails are bound
-    /// before any funds can be released.
+    /// Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
+    ///
+    /// MultiSig semantics are client-and-freelancer approval. A MultiSig
+    /// milestone can be released only by the stored client or freelancer after
+    /// both of those addresses have approved the same milestone.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `contract_id` - The contract ID
+    /// * `caller` - The address of the caller (must be authorized)
+    /// * `milestone_index` - The index of the milestone to release
+    ///
+    /// # Returns
+    /// `true` if release was successful
     ///
     /// # Errors
-    /// * `NotInitialized` - If the contract has not been initialized
-    /// * `ContractPaused` - If the contract is paused or in emergency mode
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `InvalidState` - If contract is not in Funded state
+    /// * `InvalidMilestone` - If milestone index is out of bounds
+    /// * `AlreadyReleased` - If milestone was already released
+    /// * `AlreadyRefunded` - If milestone was already refunded
+    /// * `InsufficientFunds` - If contract doesn't have enough funded balance
     /// * `InsufficientApprovals` - If required approvals are missing
+    /// * `ApprovalExpired` - If approvals have expired
     /// * `UnauthorizedRole` - If caller is not authorized to release
+    ///
+    /// # Security
+    /// - Pause/emergency gate runs BEFORE auth so funds cannot move while
+    ///   the contract is paused.
+    /// - Requires valid approvals that haven't expired
+    /// - Approvals are cleared after successful release
+    /// - Fail-closed: missing or expired approvals prevent release
     pub fn release_milestone(
         env: Env,
         contract_id: u32,
         caller: Address,
         milestone_index: u32,
     ) -> bool {
-        Self::require_initialized(&env);
+        // Pause/emergency gate: refuses any release while the contract is
+        // paused or in an active emergency. Runs BEFORE auth so a paused
+        // contract does not consume an auth cycle.
         Self::require_not_paused(&env);
-        Self::release_milestone_impl(&env, contract_id, caller, milestone_index)
+
+        // Authenticate caller before any state-dependent logic
+        caller.require_auth();
+
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        // Extend TTL on contract read
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        Self::require_not_finalized(&env, contract_id);
+
+        // Verify contract is in Funded state
+        if contract.status != ContractStatus::Funded {
+            env.panic_with_error(Error::InvalidState);
+        }
+
+        // Check caller is authorized for this release authorization mode
+        let is_client = caller == contract.client;
+        let is_freelancer = caller == contract.freelancer;
+        let is_arbiter = contract.arbiter.as_ref() == Some(&caller);
+
+        match contract.release_authorization {
+            ReleaseAuthorization::ClientOnly => {
+                if !is_client {
+                    env.panic_with_error(Error::UnauthorizedRole);
+                }
+            }
+            ReleaseAuthorization::ArbiterOnly => {
+                if !is_arbiter {
+                    env.panic_with_error(Error::UnauthorizedRole);
+                }
+            }
+            ReleaseAuthorization::ClientAndArbiter => {
+                if !is_client && !is_arbiter {
+                    env.panic_with_error(Error::UnauthorizedRole);
+                }
+            }
+            ReleaseAuthorization::MultiSig => {
+                if !is_client && !is_freelancer {
+                    env.panic_with_error(Error::UnauthorizedRole);
+                }
+            }
+        }
+
+        // Check for valid approvals
+        approvals::check_approvals(&env, &contract, contract_id, milestone_index)
+            .unwrap_or_else(|e| env.panic_with_error(e));
+
+        let milestone_key = Symbol::new(&env, "milestones");
+        let mut milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+            .unwrap();
+
+        // Extend TTL on milestone read
+        ttl::extend_milestone_ttl(&env, contract_id);
+
+        if milestone_index >= milestones.len() {
+            env.panic_with_error(Error::IndexOutOfBounds);
+        }
+
+        let mut milestone = milestones.get(milestone_index).unwrap().clone();
+
+        if milestone.released {
+            env.panic_with_error(Error::MilestoneAlreadyReleased);
+        }
+
+        if milestone.refunded {
+            env.panic_with_error(Error::AlreadyRefunded);
+        }
+
+        // Check if there's enough balance
+        let available_balance =
+            contract.funded_amount - contract.released_amount - contract.refunded_amount;
+        if available_balance < milestone.amount {
+            env.panic_with_error(Error::InsufficientFunds);
+        }
+
+        let _release_amount = milestone.amount;
+        milestone.released = true;
+        milestones.set(milestone_index, milestone.clone());
+        contract.released_amount += milestone.amount;
+
+        // Accumulate protocol fees if initialized with a fee rate
+        if Self::is_initialized(&env) {
+            let fee_bps = Self::get_protocol_fee_bps(&env);
+            if fee_bps > 0 {
+                let fee = Self::calculate_protocol_fee(milestone.amount, fee_bps);
+                let current_accumulated: i128 = env
+                    .storage()
+                    .persistent()
+                    .get(&DataKey::AccumulatedProtocolFees)
+                    .unwrap_or(0);
+                env.storage().persistent().set(
+                    &DataKey::AccumulatedProtocolFees,
+                    &(current_accumulated + fee),
+                );
+            }
+        }
+
+        // Clear approvals after successful release
+        approvals::clear_approvals(&env, contract_id, milestone_index);
+
+        // Check if all milestones are released
+        let all_released = milestones.iter().all(|m| m.released || m.refunded);
+        if all_released {
+            contract.status = ContractStatus::Completed;
+        }
+
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        // Extend TTL on contract and milestone writes
+        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
+
+        true
     }
 
     /// Refunds unreleased milestones back to the client.
@@ -285,18 +378,129 @@ impl Escrow {
     /// before any funds can be returned to the client.
     ///
     /// # Errors
-    /// * `NotInitialized` - If the contract has not been initialized
-    /// * `ContractPaused` - If the contract is paused or in emergency mode
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
     /// * `ContractNotFound` - If contract doesn't exist
     /// * `EmptyRefundRequest` - If milestone_indices is empty
+    /// * `DuplicateMilestoneInRefund` - If the same milestone appears multiple times
+    /// * `IndexOutOfBounds` - If any milestone index is out of bounds
+    /// * `AlreadyReleased` - If any milestone was already released
+    /// * `AlreadyRefunded` - If any milestone was already refunded
+    /// * `InsufficientFunds` - If contract doesn't have enough balance to refund
+    ///
+    /// # Security
+    /// * Pause/emergency gate runs BEFORE the empty/dup/index validation
+    ///   block so paused contracts cannot perform any refund-path operation
+    ///   even via degenerate inputs.
     pub fn refund_unreleased_milestones(
         env: Env,
         contract_id: u32,
         milestone_indices: Vec<u32>,
     ) -> i128 {
-        Self::require_initialized(&env);
+        // Pause/emergency gate: refuses any refund while the contract is
+        // paused or in an active emergency. Runs BEFORE auth and validation
+        // so paused contracts cannot perform any refund-path operation
+        // even via degenerate inputs.
         Self::require_not_paused(&env);
-        Self::refund_unreleased_milestones_impl(&env, contract_id, milestone_indices)
+
+        // Validate non-empty request
+        if milestone_indices.is_empty() {
+            env.panic_with_error(Error::EmptyRefundRequest);
+        }
+
+        // Check for duplicates
+        for i in 0..milestone_indices.len() {
+            for j in (i + 1)..milestone_indices.len() {
+                if milestone_indices.get(i).unwrap() == milestone_indices.get(j).unwrap() {
+                    env.panic_with_error(Error::DuplicateMilestoneInRefund);
+                }
+            }
+        }
+
+        let mut contract: Contract = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Contract(contract_id))
+            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
+
+        // Extend TTL on contract read
+        ttl::extend_contract_ttl(&env, contract_id);
+
+        Self::require_not_finalized(&env, contract_id);
+
+        contract.client.require_auth();
+
+        let milestone_key = Symbol::new(&env, "milestones");
+        let mut milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+            .unwrap();
+
+        // Extend TTL on milestone read
+        ttl::extend_milestone_ttl(&env, contract_id);
+
+        let mut total_refund_amount: i128 = 0;
+
+        // Validate all milestones first
+        for idx in milestone_indices.iter() {
+            if idx >= milestones.len() {
+                env.panic_with_error(Error::IndexOutOfBounds);
+            }
+
+            let milestone = milestones.get(idx).unwrap();
+
+            if milestone.released {
+                env.panic_with_error(Error::AlreadyReleased);
+            }
+
+            if milestone.refunded {
+                env.panic_with_error(Error::AlreadyRefunded);
+            }
+
+            total_refund_amount += milestone.amount;
+        }
+
+        // Check if there's enough balance
+        let available_balance =
+            contract.funded_amount - contract.released_amount - contract.refunded_amount;
+        if available_balance < total_refund_amount {
+            env.panic_with_error(Error::InsufficientFunds);
+        }
+
+        // Mark milestones as refunded
+        for idx in milestone_indices.iter() {
+            let mut milestone = milestones.get(idx).unwrap();
+            milestone.refunded = true;
+            milestones.set(idx, milestone);
+        }
+
+        contract.refunded_amount += total_refund_amount;
+
+        // Check if all unreleased milestones are refunded
+        let all_refunded_or_released = milestones.iter().all(|m| m.released || m.refunded);
+        if all_refunded_or_released {
+            let all_refunded = milestones.iter().all(|m| m.refunded);
+            if all_refunded {
+                contract.status = ContractStatus::Refunded;
+            } else {
+                // Some released, some refunded
+                contract.status = ContractStatus::Completed;
+            }
+        }
+
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
+        env.storage()
+            .persistent()
+            .set(&DataKey::Contract(contract_id), &contract);
+
+        // Extend TTL on contract and milestone writes
+        ttl::extend_contract_and_milestones_ttl(&env, contract_id);
+
+        total_refund_amount
     }
 
     // ── Read-only accessors ──────────────────────────────────────────────────
@@ -486,18 +690,21 @@ impl Escrow {
 
     /// Cancels an active escrow contract.
     ///
-    /// # Security
-    /// Requires initialization so admin-controlled safety rails are bound
-    /// before the contract can be cancelled and funds become refundable.
-    ///
     /// # Errors
-    /// * `NotInitialized` - If the contract has not been initialized
-    /// * `ContractPaused` - If the contract is paused or in emergency mode
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
     /// * `ContractNotFound` - If contract doesn't exist
-    /// * `UnauthorizedRole` - If caller is not the client or freelancer
-    /// * `InvalidState` - If contract is in a terminal state
+    /// * `UnauthorizedRole` - If caller is not client or freelancer
+    /// * `InvalidState` - If contract is not in Created, PartiallyFunded, or Funded state
+    ///
+    /// # Security
+    /// * Pause/emergency gate runs BEFORE contract state read so a paused
+    ///   contract cannot have its cancellation path tread on the record.
     pub fn cancel_contract(env: Env, contract_id: u32, caller: Address) -> bool {
-        Self::require_initialized(&env);
+        // Pause/emergency gate: refuses cancellation while the contract is
+        // paused or in an active emergency. Runs BEFORE state read so a
+        // paused contract cannot have its cancellation path tread on the
+        // contract record at all.
         Self::require_not_paused(&env);
 
         let mut contract: Contract = env
@@ -528,6 +735,22 @@ impl Escrow {
 
     // ── Reputation ───────────────────────────────────────────────────────────
 
+    /// Issues reputation credit for a completed contract.
+    ///
+    /// # Errors
+    /// * `ContractPaused` - If the contract is paused while not in emergency mode
+    /// * `EmergencyActive` - If the contract is in an active emergency pause
+    /// * `ContractNotFound` - If contract doesn't exist
+    /// * `UnauthorizedRole` - If caller is not the stored client
+    /// * `FreelancerMismatch` - If `freelancer` does not match the stored freelancer
+    /// * `InvalidRating` - If rating is not in [1, 5]
+    /// * `NotCompleted` - If contract status is not `Completed`
+    /// * `ReputationAlreadyIssued` - If reputation was already issued
+    /// * `SelfRating` - If client and freelancer are the same address
+    ///
+    /// # Security
+    /// * Pause/emergency gate runs BEFORE contract state read so paused
+    ///   contracts cannot have reputation mutated while paused.
     pub fn issue_reputation(
         env: Env,
         contract_id: u32,
@@ -535,6 +758,8 @@ impl Escrow {
         freelancer: Address,
         rating: i128,
     ) -> bool {
+        // Pause/emergency gate: refuses any reputation issuance while the
+        // contract is paused or in an active emergency.
         Self::require_not_paused(&env);
 
         let contract: Contract = env
