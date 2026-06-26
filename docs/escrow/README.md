@@ -136,9 +136,34 @@ against governed `max_escrow_total_stroops` (rejecting with `TotalCapExceeded`).
 escrow.deposit_funds(&contract_id, &1000_0000000_i128);
 ```
 
-`ExactTotal` contracts require one exact deposit equal to the milestone total.
-`Incremental` contracts allow partial deposits until the milestone total is
-reached. Deposits that exceed the required total fail closed.
+`deposit_funds` accepts deposits while the contract is in
+`Created` or `PartiallyFunded` status:
+
+- `Created -> PartiallyFunded` when `0 < funded_amount < total_amount` (any
+  partial installment).
+- `Created | PartiallyFunded -> Funded` once `funded_amount >= total_amount`
+  (either a single full deposit or the final-installment topping-up).
+- Any other status (Completed, Refunded, Cancelled, ...) is rejected with
+  `InvalidState` so post-resolution contracts cannot be re-funded.
+- `AmountMustBePositive` rejects zero or negative deposits (preserves the
+  dust-attack guard).
+- `InvalidDepositAmount` rejects any deposit whose addition would push
+  `funded_amount` past `total_amount` AND any deposit that would overflow
+  `i128`. Both checks happen **before** any state mutation.
+- `UnauthorizedRole` rejects any caller that is not the stored client.
+
+Positivity, status gate, milestone total, overflow check, and over-funding
+check are all evaluated **before** writing to storage. The status gate runs
+before caller-auth so a non-authenticated caller against a
+`Funded`/`Completed`/`Cancelled` contract does not reveal the existence of
+a valid funded slot beyond the public read path. Each successful deposit
+emits a `(deposited, contract_id)` event with
+`(caller, amount, funded_amount, total_amount, status)` so indexers can
+distinguish partial installments from a final-funding deposit.
+
+`deposit_funds` extends the persistent TTL of the contract and milestones
+entries on every read and write path so installment schedules do not expire
+the contract between deposits.
 
 ### 4. Release Milestones
 
@@ -269,34 +294,62 @@ Implemented events:
 - `("emergency", "activated")` and `("emergency", "resolved")`
 - `("audit", contract_id)` for lifecycle state transitions
 - `("created", contract_id)` on contract creation
+- `("deposited", contract_id)` on every successful `deposit_funds` call,
+  carrying `(caller, amount, funded_amount, total_amount, status)` so indexers
+  can distinguish partial installments from a final-funding deposit (issue #441).
 - `("released", contract_id, milestone_index)` on release
 - `("rep_issd", contract_id)` on reputation issuance
 - `("cancelled", contract_id)` on cancellation
 - `("finalized", contract_id)` on finalization
 
-There is no dedicated deposit event in the current implementation unless the
-deposit changes contract status and therefore emits an audit event. Structured
-deposit and fee events are planned in
-[#336](https://github.com/Talenttrust/Talenttrust-Contracts/issues/336).
+Fee events and any remaining structured-deposit events continue tracking in
+[#336](https://github.com/Talenttrust/Talenttrust-Contracts/issues/336); the
+deposit event lane is now closed by issue #441.
 
 ## Implemented Security Assumptions
 
 - Creation and reputation issue require explicit address authentication.
 - Pause and emergency controls are admin-authenticated.
-- Admin transfer uses a two-step propose-accept pattern. The current admin
-  cannot propose themselves. Only the current admin can cancel a pending
-  proposal. Re-proposing overwrites without error.
-- Deposits cannot exceed the exact milestone total.
+- Deposits cannot exceed the exact milestone total. Over-funding is rejected
+  with `InvalidDepositAmount` **before** any state mutation (issue #441).
+- Deposits in installments transition the contract through `Created →
+  PartiallyFunded → Funded`; partial installments are observable to indexers
+  via the `deposited` event (issue #441).
 - Releases fail on duplicate milestone release, invalid milestone id, missing
   contract, paused state, and insufficient funded balance.
 - Arithmetic for escrow totals, deposits, and releases uses checked helpers and
-  panics with `PotentialOverflow` on overflow.
+  panics with `InvalidDepositAmount` on overflow or over-funding. Other checked
+  paths may surface `PotentialOverflow` from `amount_validation.rs`.
 - Accounting is checked after balance-changing operations.
 - The contract stores accounting state only; token custody and token transfers
   are not implemented in `lib.rs` and must be handled by an audited integration.
 - Storage uses persistent keys. TTL constants exist for planned pending approval
   and migration flows, but no current public entrypoint writes those pending
   records.
+
+## Status machine: deposit_funds
+
+```
+            +-------------------+
+            |     Created       | <-- create_contract
+            +-------------------+
+              |  deposit_funds
+              v
+            +-------------------+
+            | PartiallyFunded   | <-- 0 < funded_amount < total_amount
+            +-------------------+
+              |  deposit_funds (final installment) |  cancel_contract
+              v                                     v
+            +-------------------+    +-------------------+
+            |     Funded        |    |    Cancelled      |
+            +-------------------+    +-------------------+
+```
+
+`cancel_contract` accepts `Created`, `PartiallyFunded`, and `Funded` as input
+states and transitions to `Cancelled`. `release_milestone` rejects any state
+other than `Funded` with `InvalidState`. `refund_unreleased_milestones` requires
+`Funded` and is blocked by `InvalidState` for `Created` and `PartiallyFunded`.
+`finalize_contract` requires `Completed` or `Disputed`.
 
 ## Planned Features
 

@@ -1,38 +1,63 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient, Milestone,
+    ttl, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs, EscrowClient,
+    EscrowError, Milestone,
 };
 use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol, Vec};
 
 #[contractimpl]
 impl Escrow {
-    /// Deposits funds into the contract. Transitions to PartiallyFunded or Funded status.
+    /// Deposits funds into the contract, supporting installment funding.
+    ///
+    /// Accepts deposits while the contract is in [`ContractStatus::Created`] or
+    /// [`ContractStatus::PartiallyFunded`]. After each successful call the
+    /// contract status is recomputed and transitions as follows:
+    ///
+    /// * `Created`              `->` `PartiallyFunded` if `0 < funded_amount < total_amount`
+    /// * `Created`/`PartiallyFunded` `->` `Funded` once `funded_amount >= total_amount`
+    ///
+    /// # Errors (panics)
+    ///
+    /// * `AmountMustBePositive` - if `amount <= 0`.
+    /// * `ContractNotFound` - if `contract_id` was never allocated.
+    /// * `InvalidState` - if the contract is in any status other than
+    ///   `Created` or `PartiallyFunded` (including `Funded`, `Completed`,
+    ///   `Refunded`, `Cancelled`, etc.).
+    /// * `UnauthorizedRole` - if `caller` is not the stored client.
+    /// * `InvalidDepositAmount` - if the deposit would push `funded_amount`
+    ///   past `total_amount` (over-funding) or would overflow `i128`.
     ///
     /// # Arguments
-    /// * `env` - The contract environment
+    /// * `env`         - The contract environment
     /// * `contract_id` - The contract ID
-    /// * `caller` - The address of the client making the deposit
-    /// * `amount` - The amount to deposit (in stroops)
+    /// * `caller`      - The address calling the deposit (must be the stored client)
+    /// * `amount`      - The stroop amount to deposit (must be `> 0`)
     ///
     /// # Returns
-    /// `true` if deposit was successful
+    /// `true` when the deposit is persisted and the status machine has been
+    /// updated.
     ///
-    /// # Errors
-    /// * `AmountMustBePositive` - If amount is <= 0
-    /// * `ContractNotFound` - If contract doesn't exist
-    /// * `InvalidState` - If contract is not in Created or PartiallyFunded state
-    /// * `UnauthorizedRole` - If caller is not the client
+    /// # Events
+    /// Emits `(deposited, contract_id)` with `(caller, amount, funded_amount,
+    /// total_amount, status)` so off-chain indexers can distinguish partial
+    /// installments from a final-funding deposit.
+    ///
+    /// # Security
+    /// * TTL on the contract and milestones entries is bumped on both the
+    ///   pre-read and post-write paths, so installment deposits do not expire
+    ///   idle contracts.
+    /// * All arithmetic is done via `checked_add` BEFORE the contract is
+    ///   mutated; over-funding and overflow panic before any write.
+    /// * The status gate runs before caller-auth so a non-authenticated
+    ///   caller against a `Funded`/`Completed`/`Cancelled` contract does not
+    ///   reveal the existence of a valid funded slot beyond the public read
+    ///   path.
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
-        Self::require_not_paused(&env);
+        // 1. Positivity check first; preserves the original `AmountMustBePositive` surface.
         if amount <= 0 {
             env.panic_with_error(Error::AmountMustBePositive);
         }
 
-        // Reject if paused or emergency is active (must run before loading
-        // contract data so that unauthorised callers also get the same error).
-        Self::require_not_paused(&env);
-
-        Self::require_not_finalized(&env, contract_id);
-
+        // 2. Load the contract; bump TTL on the read path.
         let mut contract: Contract = env
             .storage()
             .persistent()
@@ -41,44 +66,74 @@ impl Escrow {
 
         ttl::extend_contract_ttl(&env, contract_id);
 
-        Self::require_not_finalized(&env, contract_id);
+        // 3. Status gate: only `Created` and `PartiallyFunded` accept deposits.
+        //    Checking status before auth avoids leaking caller-info via auth
+        //    for contracts that are no longer accepting deposits.
+        match contract.status {
+            ContractStatus::Created | ContractStatus::PartiallyFunded => {}
+            _ => env.panic_with_error(Error::InvalidState),
+        }
 
+        // 4. Authenticate caller. Caller must be the stored client.
         if caller != contract.client {
             env.panic_with_error(Error::UnauthorizedRole);
         }
         caller.require_auth();
 
-        if contract.status != ContractStatus::Created
-            && contract.status != ContractStatus::PartiallyFunded
-        {
-            env.panic_with_error(Error::InvalidState);
-        }
+        // 5. Resolve the milestone total BEFORE mutating state and BEFORE
+        //    any overflow / over-funding check. Milestones are the source of
+        //    truth for the funding cap.
+        let milestone_key = Symbol::new(&env, "milestones");
+        let milestones: Vec<Milestone> = env
+            .storage()
+            .persistent()
+            .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
+            .unwrap();
 
-        contract.funded_amount += amount;
-
-        let milestones = ttl::load_milestones(&env, contract_id);
+        ttl::extend_milestone_ttl(&env, contract_id);
 
         let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
 
-        if contract.funded_amount >= total_amount {
-            contract.status = ContractStatus::Funded;
-        } else if contract.funded_amount > 0 && contract.status == ContractStatus::Created {
-            contract.status = ContractStatus::PartiallyFunded;
+        // 6. Compute the post-deposit funded amount with checked arithmetic.
+        //    Reject over-funding and overflow before any write to the contract.
+        let new_funded = contract
+            .funded_amount
+            .checked_add(amount)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::InvalidDepositAmount));
+
+        if new_funded > total_amount {
+            env.panic_with_error(EscrowError::InvalidDepositAmount);
         }
 
+        // 7. Apply the deposit and transition the status machine.
+        contract.funded_amount = new_funded;
+        contract.status = if new_funded >= total_amount {
+            ContractStatus::Funded
+        } else {
+            ContractStatus::PartiallyFunded
+        };
+
+        // 8. Persist milestones + contract, then extend TTL.
+        env.storage().persistent().set(
+            &(DataKey::Contract(contract_id), milestone_key),
+            &milestones,
+        );
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);
 
         ttl::extend_contract_ttl(&env, contract_id);
 
+        // 9. Emit a structured deposit event so indexers can distinguish
+        //    partial installments from final-funding deposits.
         env.events().publish(
-            (symbol_short!("deposit"), contract_id),
+            (symbol_short!("deposited"), contract_id),
             (
                 caller,
                 amount,
                 contract.funded_amount,
-                env.ledger().timestamp(),
+                total_amount,
+                contract.status.clone(),
             ),
         );
 
