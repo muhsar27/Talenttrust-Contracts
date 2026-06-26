@@ -26,6 +26,9 @@ Lifecycle and reputation:
 Read-only queries:
 
 - `get_contract(contract_id) -> EscrowContractData`
+- `get_milestones(contract_id) -> Vec<Milestone>`
+- `get_refundable_balance(contract_id) -> i128`
+- `get_milestone_approvals(contract_id, milestone_index) -> Option<MilestoneApprovals>`
 - `get_finalization_record(contract_id) -> Option<FinalizationRecord>`
 - `get_reputation(freelancer) -> Option<ReputationRecord>`
 - `get_average_rating(freelancer) -> Option<i128>` — scaled average (see [Average Rating](#average-rating))
@@ -36,6 +39,53 @@ Read-only queries:
 - `get_mainnet_readiness_info() -> MainnetReadinessInfo`
 - `get_protocol_fee_bps() -> u32`
 - `get_accumulated_protocol_fees() -> i128`
+
+### Read-only getter semantics
+
+The read getters below are stable, side-effect-free paths that indexers and
+off-chain callers rely on. They share three properties:
+
+1. **Not-found**: every getter that takes a `contract_id` panics the contract
+   with `ContractNotFound` when `contract_id` was never allocated. The
+   Soroban-generated `try_*` wrappers surface this as
+   `Err(Ok(ContractNotFound))` for off-chain callers and do not mutate any
+   other persistent state.
+2. **Pure read**: invoking any of these getters on a valid `contract_id` does
+   not mutate balances, status, milestones, or per-milestone flags.
+   Accounting-only fields (`funded_amount`, `released_amount`,
+   `refunded_amount`) and per-milestone `released`/`refunded` flags are
+   bitwise-stable across arbitrary numbers of repeated calls.
+3. **TTL on read (persistent only)**: on a successful read the contract
+   extends the persistent TTL of the entry being read from (`Contract(id)`,
+   `(Contract(id), "milestones")`) to `PERSISTENT_TTL_LEDGERS` (30 days).
+   This keeps idle but live contracts in storage without rebuilding them. The
+   `get_milestone_approvals` getter reads from temporary storage and is
+   therefore exempt from this rule; it is governed by
+   `PENDING_APPROVAL_TTL_LEDGERS` and the host's auto-eviction.
+
+Per-getter details:
+
+- `get_contract(contract_id)` returns the full `EscrowContractData`
+  (participants, arbiter, status, funded/released/refunded amounts,
+  release_authorization). Reads persist the contract entry's TTL. Panics
+  `ContractNotFound` for an unknown id.
+- `get_milestones(contract_id)` returns the milestones vector in creation
+  order. Reads persist the milestones entry's TTL. Panics `ContractNotFound`
+  for an unknown id.
+- `get_refundable_balance(contract_id)` returns
+  `funded_amount - released_amount - refunded_amount`. The result must be
+  non-negative by construction; panic-on-overflow is enforced on
+  contributing arithmetic at every mutating entrypoint. Reads persist the
+  contract entry's TTL. Panics `ContractNotFound` for an unknown id.
+- `get_milestone_approvals(contract_id, milestone_index)` returns `Some`
+  only if a non-expired approval record for that milestone exists in
+  temporary storage. Returns `None` when no approval has been recorded or
+  when the contract id is unknown. Does not extend persistent TTL because
+  approvals live in temporary storage bounded by
+  `PENDING_APPROVAL_TTL_LEDGERS`.
+
+These properties are locked in by tests under
+`contracts/escrow/src/test/persistence.rs` (issue #475).
 
 Operational controls:
 
