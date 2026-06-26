@@ -265,32 +265,26 @@ fn get_contract_fails_for_unknown_id() {
     );
 }
 
-// ─── MilestoneReleased ────────────────────────────────────────────────────────
+// ─── Milestone released flag (milestone vector) ───────────────────────────────
 
+/// `release_milestone` sets `ms.released = true` in the persisted milestone
+/// vector. There is no separate `DataKey::MilestoneReleased` storage key; the
+/// vector is the single source of truth for released state.
 #[test]
-fn milestone_released_written_on_release() {
+fn milestone_released_flag_set_in_vector_on_release() {
     let env = Env::default();
     env.mock_all_auths();
     let client = register_client(&env);
 
     let (client_addr, _, id) = create_contract(&env, &client);
     client.deposit_funds(&id, &client_addr, &total_milestone_amount());
+    client.approve_milestone_release(&id, &client_addr, &0);
     client.release_milestone(&id, &client_addr, &0);
 
-    env.as_contract(&client.address, || {
-        let v: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MilestoneReleased(id, 0))
-            .unwrap_or(false);
-        assert!(v);
-        let v1: bool = env
-            .storage()
-            .persistent()
-            .get(&DataKey::MilestoneReleased(id, 1))
-            .unwrap_or(false);
-        assert!(!v1);
-    });
+    let milestones = client.get_milestones(&id);
+    assert!(milestones.get(0).unwrap().released, "index 0 must be released");
+    assert!(!milestones.get(1).unwrap().released, "index 1 must not be released");
+    assert!(!milestones.get(2).unwrap().released, "index 2 must not be released");
 }
 
 #[test]

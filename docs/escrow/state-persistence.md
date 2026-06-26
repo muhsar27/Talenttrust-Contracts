@@ -7,6 +7,11 @@ declared-but-unused keys, is tracked in
 
 ## Live Storage Keys
 
+These participant indexes are **append-only**: every `create_contract` appends the new id to the appropriate index vectors.
+The contract list readers (`list_contracts_by_participant`) are therefore consistent with contract creation order.
+
+
+
 | Key | Value | Written by |
 | --- | --- | --- |
 | `Initialized` | `bool` | `initialize` |
@@ -15,12 +20,13 @@ declared-but-unused keys, is tracked in
 | `Emergency` | `bool` | emergency controls |
 | `Contract(id)` | `EscrowContractData` | create/deposit/release/reputation/cancel |
 | `NextContractId` | `u32` | `create_contract` |
-| `MilestoneReleased(id, index)` | `bool` | `release_milestone` |
 | `ReputationIssued(id)` | `bool` | `issue_reputation` |
 | `PendingReputationCredits(address)` | `u32` | final release, `issue_reputation` |
 | `Reputation(address)` | `ReputationRecord` | `issue_reputation` |
 | `Finalization(id)` | `FinalizationRecord` | `finalize_contract` |
 | `ReadinessChecklist` | `ReadinessChecklist` | initialize and emergency controls |
+| `ClientContracts(address)` | `Vec<u32>` | create_contract |
+| `FreelancerContracts(address)` | `Vec<u32>` | create_contract |
 
 ## Declared But Not Live
 
@@ -35,6 +41,21 @@ them as a complete feature:
 Protocol fee implementation is tracked in
 [#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313) and
 [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
+
+## Milestone Released State — Single Source of Truth
+
+`release_milestone` sets `milestone.released = true` inside the persisted
+`Vec<Milestone>` stored under `(DataKey::Contract(id), "milestones")`.
+
+`summarize_contract` (called by `finalize_contract`) derives
+`released_milestone_count` by iterating that same vector and counting
+`ms.released == true`. There is **no** separate `DataKey::MilestoneReleased`
+key — that variant was removed in fix [#416] because it was never written,
+causing `released_milestone_count` to always report zero in finalization
+summaries.
+
+Read and write path are now identical: the milestone vector is the sole
+authority for released state.
 
 ### 3. Reputation Auditing States
 * **`PendingReputation(Address)` / `ReputationIssued(u32)`**

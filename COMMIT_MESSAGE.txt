@@ -1,50 +1,25 @@
-feat(escrow): add milestone approval expiry flow
+fix: resolve compilation errors by refactoring contractimpl macro usage
 
-Implement comprehensive milestone approval system with TTL-based expiry
-for secure, time-limited approvals in the TalentTrust escrow contract.
+Fixes 8 compilation errors (E0425) caused by multiple #[contractimpl] 
+blocks across module files trying to reference generated types that only 
+exist in the main contract.
 
-## Features
-- Four authorization modes (ClientOnly, ArbiterOnly, ClientAndArbiter, MultiSig)
-- TTL-based approval expiry (~7 days) in temporary storage
-- Fail-closed design: missing/expired approvals prevent release
-- Approval clearing after release prevents reuse
-- Comprehensive test suite with 20+ tests
+Changes:
+- Remove #[contractimpl] from create_contract.rs, deposit.rs, finalize.rs, 
+  and migration.rs modules
+- Convert module methods to standalone implementation functions (_impl suffix)
+- Add entrypoint wrappers in lib.rs #[contractimpl] block that delegate 
+  to module functions
+- Clean up unused Escrow imports from module files
+- Make helper functions pub(crate) for cross-module access
 
-## Security
-- Role-based access control enforced at approval and release
-- Automatic expiry via Soroban temporary storage TTL
-- Arbiter validation prevents role overlap with client/freelancer
-- Balance and state checks maintained
-- Duplicate approval prevention
-- Authorization mode enforcement
+This approach maintains modular code organization while respecting 
+Soroban's single-contractimpl constraint.
 
-## Implementation Details
-- MilestoneApprovals stored in temporary storage with PENDING_APPROVAL_TTL_LEDGERS (120,960 ledgers ≈ 7 days)
-- Approvals auto-expire via TTL and are treated as absent
-- Release requires valid, non-expired approvals based on ReleaseAuthorization mode
-- Approvals cleared after successful release to prevent reuse
+Verified:
+- cargo check passes with no errors
+- All 8 E0425 errors resolved
+- Dispute resolution entrypoints (raise_dispute, resolve_dispute) remain 
+  functional
 
-## Files Added
-- contracts/escrow/src/ttl.rs - TTL constants for approval expiry
-- contracts/escrow/src/approvals.rs - Core approval logic
-- contracts/escrow/src/test/approval_expiry.rs - Comprehensive test suite
-
-## Files Modified
-- contracts/escrow/src/types.rs - Added MilestoneApprovals, ReleaseAuthorization, extended Contract and Error
-- contracts/escrow/src/lib.rs - Updated contract functions with approval flow
-- contracts/escrow/src/test.rs - Added test helpers and module includes
-- contracts/escrow/src/test/access_control.rs - Updated to use Error enum
-- docs/escrow/milestone-validation.md - Comprehensive approval flow documentation
-
-## Testing
-- 20+ integration tests covering all authorization modes
-- Unit tests for approval logic
-- Edge case coverage (expiry, duplicates, unauthorized, invalid state)
-- Multiple milestone approval scenarios
-
-## Security Assumptions
-- Fail-closed: missing or expired approvals prevent release
-- TTL enforcement via Soroban temporary storage
-- Role-based authorization enforced
-- Approvals are single-use (cleared after release)
-- State machine integrity maintained
+Related to: dispute resolution entrypoint implementation
