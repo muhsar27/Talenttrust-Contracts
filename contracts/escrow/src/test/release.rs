@@ -324,3 +324,29 @@ fn work_evidence_rejects_unknown_contract() {
     let result = escrow.try_submit_work_evidence(&9999, &freelancer, &0, &ev);
     assert_contract_error(result, Error::ContractNotFound);
 }
+
+#[test]
+fn release_emits_status_changed_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client = register_client(&env);
+    let (client_addr, _, contract_id) = create_contract(&env, &client);
+
+    assert!(client.deposit_funds(
+        &contract_id,
+        &client_addr,
+        &total_milestone_amount(),
+    ));
+
+    for i in 0..3 {
+        assert!(client.approve_milestone_release(&contract_id, &client_addr, &i));
+        assert!(client.release_milestone(&contract_id, &client_addr, &i));
+    }
+
+    let events = env.events().all();
+
+    assert!(events.iter().any(|e| {
+        format!("{:?}", e).contains("status_changed")
+    }));
+}

@@ -23,6 +23,7 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::useless_conversion)]
 
+
 mod amount_validation;
 mod approvals;
 mod create_contract;
@@ -109,6 +110,23 @@ pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
 pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
     a.checked_add(b)
 }
+
+fn emit_status_changed(
+    env: &Env,
+    contract_id: u32,
+    old_status: ContractStatus,
+    new_status: ContractStatus,
+) {
+    env.events().publish(
+        (Symbol::new(env, "status_changed"), contract_id),
+        (
+            old_status,
+            new_status,
+            env.ledger().timestamp(),
+        ),
+    );
+}
+
 
 #[contractimpl]
 impl Escrow {
@@ -461,7 +479,10 @@ impl Escrow {
         // Check if all milestones are released
         let all_released = milestones.iter().all(|m| m.released || m.refunded);
         if all_released {
+            let old_status = contract.status.clone();
             contract.status = ContractStatus::Completed;
+            emit_status_changed(env, contract_id, old_status, ContractStatus::Completed);
+
         }
 
         env.storage().persistent().set(
@@ -895,7 +916,9 @@ impl Escrow {
 
         caller.require_auth();
         Self::require_not_finalized(&env, contract_id);
+        let old_status = contract.status.clone();
         contract.status = ContractStatus::Cancelled;
+        emit_status_changed(env, contract_id, old_status, ContractStatus::Cancelled);
         env.storage()
             .persistent()
             .set(&DataKey::Contract(contract_id), &contract);

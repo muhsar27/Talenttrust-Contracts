@@ -690,3 +690,24 @@ fn only_client_or_freelancer_can_cancel() {
     // Arbiter (unauthorized role) attempts to cancel Funded state
     client.cancel_contract(&contract_id, &arbiter_addr);
 }
+
+
+#[test]
+fn cancel_emits_status_changed_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client = register_client(&env);
+    let (client_addr, freelancer_addr, _) = generate_participants(&env);
+
+    let contract_id =
+        create_default_contract(&env, &client, &client_addr, &freelancer_addr, &None);
+
+    assert!(client.cancel_contract(&contract_id, &client_addr));
+
+    let events = env.events().all();
+
+    assert!(events.iter().any(|e| {
+        format!("{:?}", e).contains("status_changed")
+    }));
+}
