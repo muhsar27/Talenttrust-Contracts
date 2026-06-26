@@ -13,8 +13,13 @@ mod pause_controls;
 mod persistence;
 mod release_authorization;
 mod client_migration;
-mod mainnet_readiness;
-
+mod emergency_controls;
+mod pause_controls;
+mod persistence;
+mod reputation;
+mod release_authorization;
+mod client_migration;
+mod refund;
 
 // --- Shared constants ---
 

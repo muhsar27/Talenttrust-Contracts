@@ -32,6 +32,17 @@ This document reflects the escrow API currently implemented in `contracts/escrow
 
 ## Reviewer Checklist
 
-1. Verify no integration guide treats planned admin transfer or standalone fee extraction as live API.
-2. Verify duplicate release, duplicate reputation issuance, overfunding, and invalid amount paths fail closed.
-3. Verify off-chain token transfer integrations are atomic or idempotent with respect to escrow state changes.
+1. Verify no integration guide treats planned entrypoints as live API.
+2. Verify pause/emergency blocks every mutating lifecycle call.
+3. Verify duplicate release, duplicate reputation issuance, overfunding, and
+   invalid amount paths fail closed.
+4. Verify off-chain token transfer integrations are atomic or idempotent with
+   respect to escrow state changes.
+## Refund Gating
+
+`refund_unreleased_milestones` rejects calls when:
+- A finalization record exists for the contract (`AlreadyFinalized`).
+- The contract status is not `Created`, `Funded`, or `Disputed` (`InvalidState`).
+
+This prevents a client from requesting refunds against a cancelled, completed,
+or already-finalized contract.
