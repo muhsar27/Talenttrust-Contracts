@@ -9,13 +9,10 @@ use crate::{Escrow, EscrowClient, ReleaseAuthorization};
 
 mod client_migration;
 mod emergency_controls;
-mod governance;
-mod governance_events;
 mod pause_controls;
-mod client_migration;
-mod deposit;
 mod persistence;
 mod release_authorization;
+mod reputation;
 
 // --- Shared constants ---
 

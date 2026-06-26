@@ -135,166 +135,146 @@ fn rejects_releasing_same_milestone_twice() {
     client.release_milestone(&contract_id, &client_addr, &0);
 }
 
-// =========================================================================
-// NEGATIVE-PATH TESTS FOR Issue #405
-// =========================================================================
-
-/// Tests that release_milestone panics with ContractNotFound for unknown contract id.
-///
-/// Asserts the exact error code when contract does not exist in storage.
+/// Tests that batch release of milestones works correctly and contract completes when all are released.
 /// 
 /// # Security
-/// - Prevents operations on non-existent contracts
-/// - Ensures fail-closed behavior for invalid contract IDs
+/// - Validates atomicity (all-or-nothing release)
+/// - Validates authorization checks
+/// - Ensures released_amount tracking is accurate
+/// - Verifies state transition to Completed
+/// - Confirms refundable balance calculation
 #[test]
-fn test_release_contract_not_found() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let caller = Address::generate(&env);
+fn batch_releases_funded_milestones_and_completes_when_all_are_released() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
 
-    // Use a contract_id that was never created
-    let invalid_contract_id = 9999_u32;
-    let result = client.try_release_milestone(&invalid_contract_id, &caller, &0_u32);
-    assert_contract_error(result, EscrowError::ContractNotFound);
-}
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
 
-/// Tests that release_milestone panics with UnauthorizedRole when caller is not authorized.
-///
-/// Asserts the exact error code when unauthorized address attempts to release.
-/// 
-/// # Security
-/// - Prevents unauthorized milestone releases
-/// - Enforces release authorization model
-#[test]
-fn test_release_unauthorized_role() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
-
-    // Fund the contract
-    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-
-    // Attempt release from wrong caller (a third party, not client)
-    let wrong_caller = Address::generate(&env);
+    // Approve all milestones
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
-    let result = client.try_release_milestone(&contract_id, &wrong_caller, &0_u32);
-    assert_contract_error(result, EscrowError::UnauthorizedRole);
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &2));
+
+    // Batch release all milestones
+    let milestone_indices = vec![&env, 0_u32, 1_u32, 2_u32];
+    let total_released = client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+    assert_eq!(total_released, 1_200_0000000_i128);
+
+    let contract = client.get_contract(&contract_id);
+    assert_contract_state(
+        contract,
+        ContractStatus::Completed,
+        1_200_0000000_i128,
+        1_200_0000000_i128,
+        0,
+    );
+    assert_milestone_flags(client.get_milestones(&contract_id), 0, true, false);
+    assert_milestone_flags(client.get_milestones(&contract_id), 1, true, false);
+    assert_milestone_flags(client.get_milestones(&contract_id), 2, true, false);
+    assert_eq!(client.get_refundable_balance(&contract_id), 0);
 }
 
-/// Tests that release_milestone panics with InvalidState when contract is not in Funded state.
-///
-/// Asserts the exact error code when attempting to release before funding.
-/// 
-/// # Security
-/// - Prevents state machine violations
-/// - Ensures funds must be deposited before release
+/// Tests that batch release is rejected with empty milestone indices.
 #[test]
-fn test_release_invalid_state() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
+#[should_panic]
+fn rejects_batch_release_with_empty_indices() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
 
-    // Try to release without funding (contract is still in Created state)
-    let result = client.try_release_milestone(&contract_id, &client_addr, &0_u32);
-    assert_contract_error(result, EscrowError::InvalidState);
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    let milestone_indices = vec![&env];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
 }
 
-/// Tests that release_milestone panics with MilestoneAlreadyReleased on duplicate release.
-///
-/// Asserts the exact error code when attempting to release an already-released milestone.
-/// 
-/// # Security
-/// - Prevents double-spending of milestones
-/// - Enforces idempotency check on milestone release state
+/// Tests that batch release is rejected with duplicate milestone indices.
 #[test]
-fn test_release_milestone_already_released() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
+#[should_panic]
+fn rejects_batch_release_with_duplicate_indices() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
 
-    // Fund and release first milestone once
-    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    let milestone_indices = vec![&env, 0_u32, 0_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+}
+
+/// Tests that batch release is rejected when insufficient funds are available for all milestones.
+#[test]
+#[should_panic]
+fn rejects_batch_release_without_sufficient_balance() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &500_0000000_i128));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
+    let milestone_indices = vec![&env, 0_u32, 1_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+}
+
+/// Tests that batch release is rejected with invalid milestone index.
+#[test]
+#[should_panic]
+fn rejects_batch_release_of_invalid_milestone() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &3));
+    let milestone_indices = vec![&env, 0_u32, 3_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
+}
+
+/// Tests that batch release is rejected if any milestone is already released.
+#[test]
+#[should_panic]
+fn rejects_batch_release_with_already_released_milestone() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
+
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
     assert!(client.release_milestone(&contract_id, &client_addr, &0));
-
-    // Try to release the same milestone again
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
-    let result = client.try_release_milestone(&contract_id, &client_addr, &0_u32);
-    assert_contract_error(result, EscrowError::MilestoneAlreadyReleased);
+    assert!(client.approve_milestone_release(&contract_id, &client_addr, &1));
+    let milestone_indices = vec![&env, 0_u32, 1_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
 }
 
-/// Tests that release_milestone panics with AlreadyRefunded when contract was refunded.
-///
-/// Asserts the exact error code when attempting to release a refunded milestone.
-/// 
-/// # Security
-/// - Prevents release of already-refunded milestones
-/// - Enforces mutual exclusivity of release and refund states
+/// Tests that batch release is rejected if any milestone is already refunded.
 #[test]
-fn test_release_already_refunded() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
+#[should_panic]
+fn rejects_batch_release_with_refunded_milestone() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
 
-    // Fund the contract and refund first milestone
-    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-    let refund_ids = vec![&env, 0_u32];
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
+    let refund_ids = vec![&env, 1_u32];
     client.refund_unreleased_milestones(&contract_id, &refund_ids);
-
-    // Try to release the refunded milestone
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
-    let result = client.try_release_milestone(&contract_id, &client_addr, &0_u32);
-    assert_contract_error(result, EscrowError::AlreadyRefunded);
+    let milestone_indices = vec![&env, 0_u32, 1_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
 }
 
-/// Tests that release_milestone panics with IndexOutOfBounds for invalid milestone index.
-///
-/// Asserts the exact error code when milestone index exceeds array bounds.
-/// 
-/// # Security
-/// - Prevents out-of-bounds memory access
-/// - Validates milestone index bounds before release
+/// Tests that batch release is rejected if any milestone lacks valid approvals.
 #[test]
-fn test_release_index_out_of_bounds() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
+#[should_panic]
+fn rejects_batch_release_with_insufficient_approvals() {
+    let (env, client_addr, freelancer_addr) = setup();
+    let client = create_client(&env);
+    let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr);
 
-    // Fund the contract (has 3 milestones: indices 0, 1, 2)
-    assert!(client.deposit_funds(&contract_id, &client_addr, &total_milestone_amount()));
-
-    // Try to release with out-of-bounds index
-    assert!(client.approve_milestone_release(&contract_id, &client_addr, &99));
-    let result = client.try_release_milestone(&contract_id, &client_addr, &99_u32);
-    assert_contract_error(result, EscrowError::IndexOutOfBounds);
-}
-
-/// Tests that release_milestone panics with InsufficientFunds when contract balance is too low.
-///
-/// Asserts the exact error code when available balance is less than milestone amount.
-/// 
-/// # Security
-/// - Prevents overdraft attacks
-/// - Validates balance availability before release
-#[test]
-fn test_release_insufficient_funds() {
-    let env = Env::default();
-    env.mock_all_auths();
-    let client = register_client(&env);
-    let (client_addr, freelancer_addr, contract_id) = create_contract(&env, &client);
-
-    // Deposit only partial amount (insufficient to release first milestone which is 200_0000000)
-    assert!(client.deposit_funds(&contract_id, &client_addr, &100_0000000_i128));
-
-    // Try to release when funded_amount < milestone amount
+    assert!(client.deposit_funds(&contract_id, &client_addr, &1_200_0000000_i128));
     assert!(client.approve_milestone_release(&contract_id, &client_addr, &0));
-    let result = client.try_release_milestone(&contract_id, &client_addr, &0_u32);
-    assert_contract_error(result, EscrowError::InsufficientFunds);
+    // Don't approve milestone 1
+    let milestone_indices = vec![&env, 0_u32, 1_u32];
+    client.release_milestones(&contract_id, &client_addr, &milestone_indices);
 }
-

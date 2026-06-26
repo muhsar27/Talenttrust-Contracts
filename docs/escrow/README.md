@@ -18,7 +18,8 @@ Lifecycle and reputation:
 
 - `create_contract(client, freelancer, milestone_amounts, deposit_mode) -> u32`
 - `deposit_funds(contract_id, amount) -> bool`
-- `release_milestone(contract_id, milestone_index) -> bool`
+- `release_milestone(contract_id, caller, milestone_index) -> bool`
+- `release_milestones(contract_id, caller, milestone_indices) -> i128`
 - `issue_reputation(contract_id, caller, freelancer, rating) -> bool`
 - `cancel_contract(contract_id, caller) -> bool`
 - `finalize_contract(contract_id, finalizer) -> bool`
@@ -167,20 +168,22 @@ the contract between deposits.
 
 ### 4. Release Milestones
 
+#### Single Milestone Release
 ```rust
-escrow.release_milestone(&contract_id, &0);
+escrow.release_milestone(&contract_id, &client_addr, &0);
 ```
 
-Current implementation note: `release_milestone` does not yet authenticate the
-client or an arbiter. It validates the contract id, milestone index, unreleased
-state, available funded balance, and paused state, then marks the milestone as
-released. This authorization gap is intentionally documented here until the auth
-fix lands.
+#### Batch Milestone Release
+```rust
+let milestone_indices = vec![&env, 0_u32, 1_u32];
+let total_released = escrow.release_milestones(&contract_id, &client_addr, &milestone_indices);
+```
 
-When a milestone is released, protocol fees are calculated and accumulated according to the formula:
-`fee = (milestone_amount * protocol_fee_bps) / 10_000`
-The calculation uses checked arithmetic and panics with `PotentialOverflow` to prevent math errors. Accumulation is routed through `safe_add_amounts`.
+Releases multiple milestones atomically. Validates all indices, approvals, and
+available balance before mutating state. Fails closed if any validation fails,
+ensuring no partial releases.
 
+Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
 When the final milestone is released, status becomes `Completed` and one pending
 reputation credit is added for the freelancer.
 
