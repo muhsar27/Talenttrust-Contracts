@@ -18,7 +18,7 @@ impl Escrow {
     /// # Errors
     /// * `AmountMustBePositive` - If amount is <= 0
     /// * `ContractNotFound` - If contract doesn't exist
-    /// * `InvalidState` - If contract is not in Created state
+    /// * `InvalidState` - If contract is not in Created or PartiallyFunded state
     /// * `UnauthorizedRole` - If caller is not the client
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
         Self::require_not_finalized(&env, contract_id);
@@ -39,11 +39,11 @@ impl Escrow {
         }
         caller.require_auth();
 
-        if contract.status != ContractStatus::Created {
+        if contract.status != ContractStatus::Created
+            && contract.status != ContractStatus::PartiallyFunded
+        {
             env.panic_with_error(Error::InvalidState);
         }
-
-        contract.funded_amount += amount;
 
         let milestone_key = Symbol::new(&env, "milestones");
         let milestones: Vec<Milestone> = env
@@ -55,6 +55,12 @@ impl Escrow {
         ttl::extend_milestone_ttl(&env, contract_id);
 
         let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
+
+        if contract.funded_amount + amount > total_amount {
+            env.panic_with_error(Error::InvalidState);
+        }
+
+        contract.funded_amount += amount;
 
         if contract.funded_amount >= total_amount {
             contract.status = ContractStatus::Funded;
