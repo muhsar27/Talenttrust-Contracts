@@ -1,6 +1,7 @@
 #![cfg(test)]
 
 use crate::{
+    dispute::{final_status_after_resolution, resolution_payouts},
     ContractStatus, DisputeResolution, Escrow, EscrowClient, EscrowError, ReleaseAuthorization,
 };
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
@@ -440,7 +441,7 @@ fn resolve_full_refund_marks_refunded_and_closes_accounting() {
 #[test]
 fn resolve_full_payout_marks_completed_and_closes_accounting() {
     let (env, _contract_id, client) = setup_initialized();
-    let (client_addr, _, arbiter_addr, escrow_id) =
+    let (client_addr, freelancer_addr, arbiter_addr, escrow_id) =
         create_funded_contract_with_arbiter(&env, &client, vec![&env, 150_i128], 150_i128);
 
     assert!(client.raise_dispute(&escrow_id, &client_addr));
@@ -454,6 +455,7 @@ fn resolve_full_payout_marks_completed_and_closes_accounting() {
         contract.released_amount + contract.refunded_amount,
         contract.total_deposited
     );
+    assert_eq!(client.get_pending_reputation_credits(&freelancer_addr), 1);
 }
 
 #[test]
