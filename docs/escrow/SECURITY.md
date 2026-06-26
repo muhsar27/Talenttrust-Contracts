@@ -34,6 +34,28 @@ This document reflects the escrow API currently implemented in `contracts/escrow
 - Finalization summaries use checked arithmetic and persistent storage. They do
   not expire through TTL and do not create, deduct, or withdraw protocol fees.
 
+## Checked Arithmetic & Accounting Invariant
+
+All balance mutations in `deposit_funds`, `release_milestone`, `refund_unreleased_milestones`, `resolve_dispute`, and `issue_reputation` route through `safe_add_amounts` / `safe_subtract_amounts` (which wrap `i128::checked_add` / `checked_sub`) and panic with `PotentialOverflow` on overflow or `AccountingInvariantViolated` on underflow.
+
+After each mutation the core invariant is asserted:
+
+```
+funded_amount >= released_amount + refunded_amount
+```
+
+This invariant is enforced via the checked helpers in:
+- `deposit.rs` — `funded_amount` and `total_deposited` use `safe_add_amounts`
+- `lib.rs:release_milestone` — `released_amount` uses `safe_add_amounts`; available_balance uses `safe_subtract_amounts`
+- `lib.rs:refund_unreleased_milestones` — `refunded_amount` uses `safe_add_amounts`; available_balance uses `safe_subtract_amounts`
+- `lib.rs:get_refundable_balance` — returns checked subtraction result or panics
+- `lib.rs:resolve_dispute` — both `refunded_amount` and `released_amount` use `safe_add_amounts`; invariant `funded_amount == released + refunded` is checked
+- `lib.rs:issue_reputation` — pending credits and rating totals use checked arithmetic
+- `finalize.rs:summarize_contract` — milestone totals and refundable balance use checked arithmetic
+- `dispute.rs:resolution_payouts` — uses `checked_sub` / `checked_mul` / `checked_div` throughout
+
+No silent wraparound is possible; any overflow or invariant violation causes an immediate panic with the appropriate `EscrowError` variant.
+
 ## Known Live Gaps
 
 - The contract records escrow accounting only. Token custody, token transfers, and atomic asset movement are managed outside `lib.rs` and must be handled by a separate audited integration contract or protocol suite.

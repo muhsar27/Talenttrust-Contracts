@@ -2,7 +2,7 @@ use soroban_sdk::{contracttype, symbol_short, Address, Env, Vec};
 
 use crate::{
     safe_subtract_amounts, Contract, ContractStatus, ContractSummary, DataKey, Escrow, EscrowError,
-    Milestone, MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
+    MilestoneSummary, CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
 
 /// Immutable metadata written when an escrow contract is closed.
@@ -144,9 +144,7 @@ pub fn finalize_contract_impl(env: &Env, contract_id: u32, finalizer: Address) -
     Escrow::require_not_finalized(&env, contract_id);
     Escrow::require_finalizer_role(&env, &contract, &finalizer);
 
-    if contract.status != ContractStatus::Completed
-        && contract.status != ContractStatus::Disputed
-    {
+    if contract.status != ContractStatus::Completed && contract.status != ContractStatus::Disputed {
         env.panic_with_error(EscrowError::InvalidStatusTransition);
     }
 

@@ -2,7 +2,7 @@ use crate::ttl::{PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS};
 use crate::types::{
     Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization,
 };
-use soroban_sdk::{Address, Env, Vec};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Approves a milestone for release by the caller.
 ///
@@ -270,6 +270,7 @@ mod tests {
             released_amount: 0,
             refunded_amount: 0,
             release_authorization: ReleaseAuthorization::ClientOnly,
+            reputation_issued: false,
         };
 
         let contract_id = 1u32;
@@ -324,7 +325,8 @@ mod tests {
             funded_amount: 1000,
             released_amount: 0,
             refunded_amount: 0,
-            release_authorization: ReleaseAuthorization::MultiSig,
+            release_authorization: ReleaseAuthorization::ClientOnly,
+            reputation_issued: false,
         };
 
         let contract_id = 1u32;
@@ -387,6 +389,7 @@ mod tests {
             released_amount: 0,
             refunded_amount: 0,
             release_authorization: ReleaseAuthorization::ClientOnly,
+            reputation_issued: false,
         };
 
         let contract_id = 1u32;

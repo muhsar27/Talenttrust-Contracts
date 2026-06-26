@@ -10,6 +10,9 @@ pub const STROOP_PRECISION: u8 = 7;
 /// Maximum individual amount allowed per operation to prevent overflow
 pub const MAX_SINGLE_AMOUNT_STROOPS: i128 = 1_000_000_0000000; // 1M tokens
 
+/// Maximum total escrow per contract in stroops (1M tokens)
+pub const MAX_TOTAL_ESCROW_STROOPS: i128 = 1_000_000_0000000;
+
 /// Minimum positive amount (1 stroop)
 pub const MIN_POSITIVE_AMOUNT: i128 = 1;
 
@@ -30,13 +33,13 @@ pub enum AmountValidationError {
 pub fn validate_single_amount(amount: i128) -> Result<(), crate::EscrowError> {
     // Check positivity
     if amount <= MIN_POSITIVE_AMOUNT - 1 {
-        return Err(crate::Error::AmountMustBePositive);
+        return Err(crate::EscrowError::AmountMustBePositive);
     }
 
     // Check maximum bounds
     if amount > MAX_SINGLE_AMOUNT_STROOPS {
         // No direct canonical error; map to InvalidMilestoneAmount for generic excess amount
-        return Err(crate::Error::InvalidMilestoneAmount);
+        return Err(crate::EscrowError::InvalidMilestoneAmount);
     }
 
     // Check stroop precision (must be integer, which i128 already guarantees)
@@ -65,7 +68,7 @@ pub fn validate_amount_array(amounts: &[i128]) -> Result<i128, crate::EscrowErro
         if let Some(new_total) = total.checked_add(amount) {
             total = new_total;
         } else {
-            return Err(crate::Error::PotentialOverflow);
+            return Err(crate::EscrowError::PotentialOverflow);
         }
     }
 
@@ -86,7 +89,6 @@ pub fn validate_contract_total(
     max_contract_total: i128,
 ) -> Result<(), crate::EscrowError> {
     if total_amount > max_contract_total {
-        // Map to InvalidMilestoneAmount for contract total overflow
         return Err(crate::EscrowError::InvalidMilestoneAmount);
     }
     Ok(())
