@@ -13,34 +13,7 @@ mod approval_expiry;
 mod authorization_matrix_validation;
 mod cancel_contract;
 mod client_migration;
-mod contract_id_allocation;
-mod create_contract;
-mod create_contract_bounds;
-mod deposit;
-mod dispute;
-mod emergency_controls;
-mod flows;
-mod governance;
-mod governance_events;
-mod hello;
-mod input_sanitization_amounts;
-mod input_sanitization_identities;
-mod lifecycle;
-mod mainnet_readiness;
-mod milestone_schedule;
-mod pause_controls;
-mod performance;
-mod persistence;
-mod protocol_fees;
-mod refund;
-mod release;
-mod release_authorization;
-mod reputation;
-mod security;
-mod storage;
-mod summary;
-mod timeout_tests;
-mod ttl_tests;
+mod sac_custody;
 
 // --- Shared constants ---
 

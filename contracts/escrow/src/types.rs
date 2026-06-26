@@ -31,6 +31,10 @@ pub enum DataKey {
     ReadinessChecklist,
     // Finalization
     Finalization(u32),
+    // SAC settlement token — bound once at admin setup; deposit_funds and
+    // release_milestone read this to wire on-chain custody through the
+    // configured Stellar Asset Contract.
+    SettlementToken,
 }
 
 /// Canonical contract error type for all entrypoint-facing errors.

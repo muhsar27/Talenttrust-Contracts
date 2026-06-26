@@ -88,10 +88,11 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-    AlreadyFinalized = 25,
-    PotentialOverflow = 26,
-    AccountingInvariantViolated = 27,
-    InvalidDisputeSplit = 28,
+    // Append-only codes for SAC token custody (#439). Do not renumber.
+    SettlementTokenAlreadyBound = 25,
+    SettlementTokenNotConfigured = 26,
+    InsufficientTokenBalance = 27,
+    TokenTransferFailed = 28,
 }
 
 #[contracttype]
@@ -171,6 +172,56 @@ impl Escrow {
     /// Returns the stored governance admin address.
     pub fn get_admin(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::Admin)
+    }
+
+    /// Bind the SAC settlement token used by `deposit_funds` and
+    /// `release_milestone`. Single-use: the first call after `initialize`
+    /// stores the token address; subsequent calls panic with
+    /// `SettlementTokenAlreadyBound`.
+    ///
+    /// # Arguments
+    /// * `env`  - The contract environment
+    /// * `token` - The Stellar Asset Contract address that all escrowed
+    ///              funds will be denominated in.
+    ///
+    /// # Returns
+    /// `true` on a successful binding.
+    ///
+    /// # Errors
+    /// * `NotInitialized` - if `initialize` has never been called.
+    /// * `UnauthorizedRole` - if the caller is not the stored admin.
+    /// * `SettlementTokenAlreadyBound` - if a token has already been bound.
+    ///
+    /// # Security
+    /// * Token binding is single-use, gated to the admin, and audited via
+    ///   the `(settl_tok, "bound")` event so an observer can prove the
+    ///   binding sequence.
+    pub fn bind_settlement_token(env: Env, token: Address) -> bool {
+        Self::require_initialized(&env);
+        let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
+        admin.require_auth();
+        if env
+            .storage()
+            .persistent()
+            .get::<_, Address>(&DataKey::SettlementToken)
+            .is_some()
+        {
+            env.panic_with_error(EscrowError::SettlementTokenAlreadyBound);
+        }
+        env.storage()
+            .persistent()
+            .set(&DataKey::SettlementToken, &token);
+        env.events().publish(
+            (symbol_short!("settl_tok"), Symbol::new(&env, "bound")),
+            (admin, token, env.ledger().timestamp()),
+        );
+        true
+    }
+
+    /// Returns the bound SAC settlement token address, or `None` if no token
+    /// has been bound via `bind_settlement_token` yet.
+    pub fn get_settlement_token(env: Env) -> Option<Address> {
+        env.storage().persistent().get(&DataKey::SettlementToken)
     }
 
     /// Returns the current mainnet readiness checklist.
@@ -331,21 +382,55 @@ impl Escrow {
         milestones.set(milestone_index, milestone.clone());
         contract.released_amount += milestone.amount;
 
-        // Accumulate protocol fees if initialized with a fee rate
-        if Self::is_initialized(&env) {
+        // ── SAC payout ─────────────────────────────────────────────────
+        // Read the bound settlement token. If no token has been bound yet,
+        // surface `SettlementTokenNotConfigured` BEFORE any state mutation
+        // so the milestone state and accounting remain consistent.
+        let settlement_token: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SettlementToken)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::SettlementTokenNotConfigured));
+        let token_client = soroban_sdk::token::Client::new(&env, &settlement_token);
+
+        // Compute the net payout = milestone.amount minus the protocol fee.
+        // The fee is retained inside the contract (accumulated accounting
+        // below) and may later be withdrawn via `withdraw_protocol_fees`.
+        let fee: i128 = if Self::is_initialized(&env) {
             let fee_bps = Self::get_protocol_fee_bps(&env);
             if fee_bps > 0 {
-                let fee = Self::calculate_protocol_fee(milestone.amount, fee_bps);
-                let current_accumulated: i128 = env
-                    .storage()
-                    .persistent()
-                    .get(&DataKey::AccumulatedProtocolFees)
-                    .unwrap_or(0);
-                env.storage().persistent().set(
-                    &DataKey::AccumulatedProtocolFees,
-                    &(current_accumulated + fee),
-                );
+                Self::calculate_protocol_fee(milestone.amount, fee_bps)
+            } else {
+                0
             }
+        } else {
+            0
+        };
+        let payout = milestone
+            .amount
+            .checked_sub(fee)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::InvalidMilestoneAmount));
+
+        // Token transfer happens BEFORE state persistence so a transfer
+        // failure leaves accounting untouched. The SAC checks auth on the
+        // `from` (the contract); invoking the SAC from inside the escrow
+        // authorizes the contract implicitly for the transfer.
+        token_client.transfer(&env.current_contract_address(), &contract.freelancer, &payout);
+
+        // ── Fee accounting ──────────────────────────────────────────────
+        if fee > 0 {
+            let current_accumulated: i128 = env
+                .storage()
+                .persistent()
+                .get(&DataKey::AccumulatedProtocolFees)
+                .unwrap_or(0);
+            let new_accumulated = current_accumulated
+                .checked_add(fee)
+                .unwrap_or_else(|| env.panic_with_error(EscrowError::InsufficientAccumulatedFees));
+            env.storage().persistent().set(
+                &DataKey::AccumulatedProtocolFees,
+                &new_accumulated,
+            );
         }
 
         // Clear approvals after successful release
@@ -367,6 +452,13 @@ impl Escrow {
 
         // Extend TTL on contract and milestone writes
         ttl::extend_contract_and_milestones_ttl(&env, contract_id);
+
+        // Audit event for the SAC payout path (off-chain indexers can
+        // correlate this with the SAC's own transfer events).
+        env.events().publish(
+            (symbol_short!("released"), contract_id, milestone_index),
+            (contract.freelancer.clone(), payout, fee, settlement_token),
+        );
 
         true
     }

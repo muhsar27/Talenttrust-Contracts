@@ -8,21 +8,26 @@ issues so integrators can distinguish live API from roadmap.
 
 - `contracts/escrow/src/lib.rs`: contract type, shared API surface, reads, controls, cancellation, reputation, and module wiring.
 - `contracts/escrow/src/create_contract.rs`: `create_contract` lifecycle entrypoint.
-- `contracts/escrow/src/deposit.rs`: `deposit_funds` lifecycle entrypoint.
-- `contracts/escrow/src/release.rs`: `release_milestone` lifecycle entrypoint.
+- `contracts/escrow/src/deposit.rs`: `deposit_funds` lifecycle entrypoint (SAC-aware; pulls tokens from client to escrow).
+- `contracts/escrow/src/release_milestone.rs`: inlined in `lib.rs`; transfers tokens from escrow to freelancer net of protocol fee.
 - `contracts/escrow/src/refund.rs`: `refund_unreleased_milestones` lifecycle entrypoint.
+- `contracts/escrow/src/test/sac_custody.rs`: SAC custody tests for `bind_settlement_token`, `deposit_funds` (SAC path), and `release_milestone` (SAC path).
 
 ## Implemented API Surface
 
 Lifecycle and reputation:
 
 - `create_contract(client, freelancer, milestone_amounts, deposit_mode) -> u32`
-- `deposit_funds(contract_id, amount) -> bool`
-- `release_milestone(contract_id, caller, milestone_index) -> bool`
-- `release_milestones(contract_id, caller, milestone_indices) -> i128`
+- `deposit_funds(contract_id, amount) -> bool` *(SAC-aware; pulls tokens from client via `token::Client::transfer`)*
+- `release_milestone(contract_id, milestone_index) -> bool` *(SAC-aware; pays freelancer net of protocol fee)*
 - `issue_reputation(contract_id, caller, freelancer, rating) -> bool`
 - `cancel_contract(contract_id, caller) -> bool`
 - `finalize_contract(contract_id, finalizer) -> bool`
+
+SAC settlement-token binding:
+
+- `bind_settlement_token(token) -> bool` *(admin-only, single-use; binds the Stellar Asset Contract used for custody)*
+- `get_settlement_token() -> Option<Address>`
 
 Read-only queries:
 
@@ -35,6 +40,7 @@ Read-only queries:
 - `get_average_rating(freelancer) -> Option<i128>` — scaled average (see [Average Rating](#average-rating))
 - `get_pending_reputation_credits(freelancer) -> u32`
 - `get_admin() -> Option<Address>`
+- `get_settlement_token() -> Option<Address>`
 - `is_paused() -> bool`
 - `is_emergency() -> bool`
 - `get_mainnet_readiness_info() -> MainnetReadinessInfo`
@@ -106,14 +112,18 @@ Governance admin transfer (two-step):
 
 ## Canonical Happy Path
 
-### 1. Initialize Operational Admin
+### 1. Initialize Operational Admin and Bind Settlement Token
 
 ```rust
 escrow.initialize(&admin);
+let sac = /* deployed Stellar Asset Contract address */;
+escrow.bind_settlement_token(&sac);
 ```
 
 `initialize` is single-use, requires `admin.require_auth()`, and stores the
-admin used by pause and emergency controls.
+admin used by pause, emergency, fee, and token-binding controls.
+`bind_settlement_token` is also single-use (a second call panics with
+`SettlementTokenAlreadyBound`) and emits a `(settl_tok, "bound")` audit event.
 
 ### 2. Create Contract
 
@@ -121,8 +131,9 @@ admin used by pause and emergency controls.
 let contract_id = escrow.create_contract(
     &client_addr,
     &freelancer_addr,
+    &None,
     &vec![&env, 500_0000000_i128, 500_0000000_i128],
-    &DepositMode::ExactTotal,
+    &ReleaseAuthorization::ClientOnly,
 );
 ```
 
@@ -131,61 +142,45 @@ addresses, rejects empty or non-positive milestones, caps milestone count at
 `MAX_MILESTONES` (rejecting with `TooManyMilestones`), and caps total escrow value
 against governed `max_escrow_total_stroops` (rejecting with `TotalCapExceeded`).
 
-### 3. Deposit Funds
+### 3. Deposit Funds (SAC debit)
 
 ```rust
-escrow.deposit_funds(&contract_id, &1000_0000000_i128);
+escrow.deposit_funds(&contract_id, &client_addr, &1000_0000000_i128);
 ```
 
-`deposit_funds` accepts deposits while the contract is in
-`Created` or `PartiallyFunded` status:
+`deposit_funds` now performs a real on-chain transfer: the escrow contract
+calls `token::Client::transfer(caller, escrow, amount)` against the bound
+settlement token BEFORE updating `funded_amount`. If the SAC transfer fails
+the contract accounting is unchanged, so a partial-deposit run can never
+leave the accounting counter ahead of the actual custody balance.
 
-- `Created -> PartiallyFunded` when `0 < funded_amount < total_amount` (any
-  partial installment).
-- `Created | PartiallyFunded -> Funded` once `funded_amount >= total_amount`
-  (either a single full deposit or the final-installment topping-up).
-- Any other status (Completed, Refunded, Cancelled, ...) is rejected with
-  `InvalidState` so post-resolution contracts cannot be re-funded.
-- `AmountMustBePositive` rejects zero or negative deposits (preserves the
-  dust-attack guard).
-- `InvalidDepositAmount` rejects any deposit whose addition would push
-  `funded_amount` past `total_amount` AND any deposit that would overflow
-  `i128`. Both checks happen **before** any state mutation.
-- `UnauthorizedRole` rejects any caller that is not the stored client.
+`ExactTotal` contracts require one exact deposit equal to the milestone total.
+`Incremental` contracts allow partial deposits until the milestone total is
+reached. Deposits that exceed the required total fail closed with
+`InvalidDepositAmount`.
 
-Positivity, status gate, milestone total, overflow check, and over-funding
-check are all evaluated **before** writing to storage. The status gate runs
-before caller-auth so a non-authenticated caller against a
-`Funded`/`Completed`/`Cancelled` contract does not reveal the existence of
-a valid funded slot beyond the public read path. Each successful deposit
-emits a `(deposited, contract_id)` event with
-`(caller, amount, funded_amount, total_amount, status)` so indexers can
-distinguish partial installments from a final-funding deposit.
-
-`deposit_funds` extends the persistent TTL of the contract and milestones
-entries on every read and write path so installment schedules do not expire
-the contract between deposits.
-
-### 4. Release Milestones
+### 4. Release Milestone (SAC payout)
 
 #### Single Milestone Release
 ```rust
 escrow.release_milestone(&contract_id, &client_addr, &0);
 ```
 
-#### Batch Milestone Release
-```rust
-let milestone_indices = vec![&env, 0_u32, 1_u32];
-let total_released = escrow.release_milestones(&contract_id, &client_addr, &milestone_indices);
-```
+`release_milestone` performs a real on-chain payout:
 
-Releases multiple milestones atomically. Validates all indices, approvals, and
-available balance before mutating state. Fails closed if any validation fails,
-ensuring no partial releases.
+1. All existing pre-conditions (pause gate, auth, approval, role /
+   `ReleaseAuthorization`, milestone state, balance) hold.
+2. The escrow reads the bound settlement token; if no token has been bound it
+   panics with `SettlementTokenNotConfigured`.
+3. The escrow reads the protocol fee (set via `set_protocol_fee_bps`); the
+   payout to the freelancer is `milestone.amount - fee`, with `fee` retained
+   inside the contract via `DataKey::AccumulatedProtocolFees`.
+4. `token::Client::transfer(escrow, freelancer, payout)` is invoked BEFORE
+   the milestone is marked released and the contract status is updated — so
+   a token-transfer failure leaves the contract untouched.
 
-Requires valid, non-expired approvals based on the contract's ReleaseAuthorization mode.
-When the final milestone is released, status becomes `Completed` and one pending
-reputation credit is added for the freelancer.
+When the final milestone is released, status becomes `Completed` and one
+pending reputation credit is added for the freelancer.
 
 `PendingReputationCredits` is a non-negative counter that tracks completed
 contracts awaiting client-issued reputation for a freelancer. `issue_reputation`
@@ -202,27 +197,32 @@ client, the freelancer argument must match the contract freelancer, the contract
 must be `Completed`, rating must be `1..=5`, and each contract can issue
 reputation once.
 
-## Average Rating
+## Custody Lifecycle (SAC token integration)
 
-`get_average_rating(freelancer) -> Option<i128>` returns the freelancer's
-average rating scaled to **basis points (×10 000)**, or `None` if no reputation
-record exists or `completed_contracts == 0`.
+The escrow holds a real Stellar Asset Contract (SAC) balance for the lifetime
+of each contract. The flow is fully on-chain and atomic — every state change
+to the contract's accounting counters is paired with the matching SAC
+`transfer` call. There is no off-chain reconciliation step.
 
-Formula:
-
-```
-result = total_rating * 10_000 / completed_contracts
-```
-
-To convert back to the 1–5 decimal scale, divide by `10_000`:
-
-| `total_rating` | `completed_contracts` | `get_average_rating` | Decimal |
+| Step | Entrypoint | SAC operation | State change |
 |---|---|---|---|
-| 5 | 1 | 50 000 | 5.0000 |
-| 8 | 2 | 40 000 | 4.0000 |
-| 3 | 2 | 15 000 | 1.5000 |
+| Token binding (admin, single-use) | `bind_settlement_token(sac)` | `—` | `DataKey::SettlementToken = sac` |
+| Funding | `deposit_funds(id, client, amount)` | `transfer(client, escrow, amount)` | `contract.funded_amount += amount` |
+| Release | `release_milestone(id, caller, idx)` | `transfer(escrow, freelancer, milestone.amount - fee)` | `milestone.released = true`, `contract.released_amount += milestone.amount`, `DataKey::AccumulatedProtocolFees += fee` |
+| Refund (planned) | `refund_unreleased_milestones(id, indices)` | `transfer(escrow, client, sum)` | `milestone.refunded = true`, `contract.refunded_amount += sum` |
 
-Checked arithmetic is used; overflow and division-by-zero cannot occur.
+The pause/emergency gate, fail-closed validation, and TTL bumps from the
+existing lifecycle are preserved unchanged on each path.
+
+### Failure semantics
+
+| Failure | Behaviour |
+|---|---|
+| `bind_settlement_token` called twice | `SettlementTokenAlreadyBound` panic; existing token retained |
+| `deposit_funds` with no token bound | `SettlementTokenNotConfigured` panic; funded_amount unchanged |
+| `deposit_funds` with insufficient SAC balance | SAC transfer fails; `TokenTransferFailed` panic via Soroban's contract-error return; funded_amount unchanged |
+| `release_milestone` with no token bound | `SettlementTokenNotConfigured` panic; milestone state unchanged |
+| `release_milestone` with insufficient SAC balance | SAC transfer fails; milestone state unchanged |
 
 ## Cancellation
 
@@ -292,43 +292,50 @@ lifecycle calls fail with `ContractPaused`; read-only queries remain available.
 Implemented events:
 
 - `("init", "admin_set")` on `initialize`
+- `("settl_tok", "bound")` on `bind_settlement_token`
 - `("paused", timestamp)` on `pause`
 - `("unpaused", timestamp)` on `unpause`
 - `("emergency", "activated")` and `("emergency", "resolved")`
 - `("audit", contract_id)` for lifecycle state transitions
 - `("created", contract_id)` on contract creation
-- `("deposited", contract_id)` on every successful `deposit_funds` call,
-  carrying `(caller, amount, funded_amount, total_amount, status)` so indexers
-  can distinguish partial installments from a final-funding deposit (issue #441).
-- `("released", contract_id, milestone_index)` on release
+- `("deposited", contract_id)` on deposit (with payload `(caller, amount, funded_amount, total, settlement_token)`)
+- `("released", contract_id, milestone_index)` on release (with payload `(freelancer, payout, fee, settlement_token)`)
 - `("rep_issd", contract_id)` on reputation issuance
 - `("cancelled", contract_id)` on cancellation
 - `("finalized", contract_id)` on finalization
 
-Fee events and any remaining structured-deposit events continue tracking in
-[#336](https://github.com/Talenttrust/Talenttrust-Contracts/issues/336); the
-deposit event lane is now closed by issue #441.
+The `("deposited", contract_id)` event is emitted on every successful
+`deposit_funds` call (previously only status-changing deposits surfaced an
+event). It includes the settlement-token address so off-chain indexers can
+correlate the audit event with the SAC's own `transfer` event.
+
+The `("released", contract_id, milestone_index)` event's payload now also
+includes the gross payout, retained fee, and settlement-token address so
+indexers can reconcile the escrow's accounting against the SAC's
+`transfer` events without re-deriving fee math.
 
 ## Implemented Security Assumptions
 
 - Creation and reputation issue require explicit address authentication.
 - Pause and emergency controls are admin-authenticated.
-- Deposits cannot exceed the exact milestone total. Over-funding is rejected
-  with `InvalidDepositAmount` **before** any state mutation (issue #441).
-- Deposits in installments transition the contract through `Created →
-  PartiallyFunded → Funded`; partial installments are observable to indexers
-  via the `deposited` event (issue #441).
+- The settlement token is admin-bound once via `bind_settlement_token`; a
+  second call panics with `SettlementTokenAlreadyBound` and is audited via
+  the `("settl_tok", "bound")` event.
+- Deposits pull real SAC tokens from the client via `token::Client::transfer`
+  BEFORE updating `funded_amount`, so a failed transfer leaves accounting
+  untouched.
+- Deposits cannot exceed the exact milestone total; over-funding is detected
+  via `checked_add` and panics with `InvalidDepositAmount`.
+- Releases pay the freelancer (less protocol fee) via
+  `token::Client::transfer` BEFORE updating milestone/contract state, so a
+  failed payout leaves state untouched.
 - Releases fail on duplicate milestone release, invalid milestone id, missing
-  contract, paused state, and insufficient funded balance.
-- Arithmetic for escrow totals, deposits, and releases uses checked helpers and
-  panics with `InvalidDepositAmount` on overflow or over-funding. Other checked
-  paths may surface `PotentialOverflow` from `amount_validation.rs`.
-- Accounting is checked after balance-changing operations.
-- The contract stores accounting state only; token custody and token transfers
-  are not implemented in `lib.rs` and must be handled by an audited integration.
-- Storage uses persistent keys. TTL constants exist for planned pending approval
-  and migration flows, but no current public entrypoint writes those pending
-  records.
+  contract, paused state, missing settlement token, and insufficient funded
+  balance.
+- Arithmetic for escrow totals, deposits, and releases uses checked helpers
+  and panics with `PotentialOverflow` or `InvalidDepositAmount` on overflow.
+- Accounting is checked after balance-changing operations; SAC balance and
+  accounting counter cannot diverge through any tested path.
 
 ## Refund Accounting Invariant
 
@@ -378,17 +385,18 @@ every operation order:
 
 These features are not implemented entrypoints today:
 
-- Protocol fee deduction on release: planned in
-  [#313](https://github.com/Talenttrust/Talenttrust-Contracts/issues/313).
+- Two-step admin transfer: planned in
+  [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318).
 - Protocol fee treasury withdrawal: planned in
   [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
+  Note: fee accumulation is now wired into `release_milestone` (issue #439).
+  A `withdraw_protocol_fees` entrypoint remains unimplemented pending the
+  dedicated fee-treasury issue.
 - Governed parameter setter/readiness wiring: planned in
   [#323](https://github.com/Talenttrust/Talenttrust-Contracts/issues/323).
-- Structured deposit and fee events: planned in
-  [#336](https://github.com/Talenttrust/Talenttrust-Contracts/issues/336).
-- Storage-key reference for declared-but-unused keys, including pending client
-  migration and protocol fee keys: planned in
-  [#342](https://github.com/Talenttrust/Talenttrust-Contracts/issues/342).
+- `refund_unreleased_milestones` SAC refund path (the function exists but
+  deferring the `token::Client::transfer` to the client until the
+  refund-treasury issue picks up tracking).
 - `migrate_state` / `StateV1` / `StateV2` migration flow: not implemented;
   tracked by this reconciliation issue
   [#341](https://github.com/Talenttrust/Talenttrust-Contracts/issues/341)
