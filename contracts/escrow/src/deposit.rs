@@ -1,5 +1,6 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
+    ttl, validate_single_amount, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs,
+    EscrowClient, EscrowError, Milestone,
 };
 use soroban_sdk::{contractimpl, Address, Env, Symbol, Vec};
 
@@ -41,9 +42,15 @@ impl Escrow {
     ///   mutated; the previous code would happily accept over-funds and
     ///   silently mask them with a `Created`/`Funded` transition.
     pub fn deposit_funds(env: Env, contract_id: u32, caller: Address, amount: i128) -> bool {
-        Self::require_not_finalized(&env, contract_id);
-        if amount <= 0 {
-            env.panic_with_error(Error::AmountMustBePositive);
+        if let Err(e) = validate_single_amount(amount) {
+            match e {
+                EscrowError::AmountMustBePositive => {
+                    env.panic_with_error(Error::AmountMustBePositive);
+                }
+                _ => {
+                    env.panic_with_error(Error::InvalidMilestoneAmount);
+                }
+            }
         }
 
         // 2. Load the contract; bump TTL on the read path.

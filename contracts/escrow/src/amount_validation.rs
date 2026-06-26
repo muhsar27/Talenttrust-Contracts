@@ -8,11 +8,9 @@
 pub const STROOP_PRECISION: u8 = 7;
 
 /// Maximum individual amount allowed per operation to prevent overflow
-#[allow(dead_code)] // available for callers; not used internally
 pub const MAX_SINGLE_AMOUNT_STROOPS: i128 = 1_000_000_0000000; // 1M tokens
 
 /// Minimum positive amount (1 stroop)
-#[allow(dead_code)] // available for callers; not used internally
 pub const MIN_POSITIVE_AMOUNT: i128 = 1;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -29,8 +27,7 @@ pub enum AmountValidationError {
 ///
 /// # Returns
 /// `Ok(())` if valid, `Err(AmountValidationError)` if invalid
-#[allow(dead_code)] // available for callers; not used by the contract directly
-pub fn validate_single_amount(amount: i128) -> Result<(), crate::Error> {
+pub fn validate_single_amount(amount: i128) -> Result<(), crate::EscrowError> {
     // Check positivity
     if amount <= MIN_POSITIVE_AMOUNT - 1 {
         return Err(crate::Error::AmountMustBePositive);

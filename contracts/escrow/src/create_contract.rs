@@ -1,6 +1,6 @@
 use crate::{
-    ttl, Contract, ContractStatus, DataKey, Error, Escrow, Milestone,
-    ReleaseAuthorization,
+    ttl, validate_single_amount, Contract, ContractStatus, DataKey, Error, Escrow, EscrowArgs,
+    EscrowClient, Milestone, ReleaseAuthorization,
 };
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
@@ -66,9 +66,10 @@ impl Escrow {
             env.panic_with_error(Error::EmptyMilestones);
         }
 
-        // Enforce maximum number of milestones
-        if milestones.len() > MAX_MILESTONES {
-            env.panic_with_error(Error::TooManyMilestones);
+        for amount in milestones.iter() {
+            if validate_single_amount(amount).is_err() {
+                env.panic_with_error(Error::InvalidMilestoneAmount);
+            }
         }
 
         let id = next_contract_id(env);

@@ -23,7 +23,7 @@
 #![allow(clippy::single_match)]
 #![allow(clippy::useless_conversion)]
 
-mod amount_validation;
+pub mod amount_validation;
 mod approvals;
 mod create_contract;
 mod deposit;
@@ -38,7 +38,10 @@ mod types;
 mod amount_validation;
 mod utils;
 
-pub use dispute::DisputeResolution;
+pub use amount_validation::{
+    safe_add_amounts, safe_subtract_amounts, validate_deposit_amount, validate_milestone_amounts,
+    validate_single_amount, MAX_SINGLE_AMOUNT_STROOPS, MIN_POSITIVE_AMOUNT, STROOP_PRECISION,
+};
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
 pub use types::{
@@ -89,9 +92,10 @@ pub enum EscrowError {
     NotCompleted = 22,
     FreelancerMismatch = 23,
     InvalidStatusTransition = 24,
-    InvalidDisputeSplit = 25,
-    AccountingInvariantViolated = 26,
-    PotentialOverflow = 27,
+    AmountMustBePositive = 25,
+    PotentialOverflow = 26,
+    AlreadyFinalized = 27,
+    AccountingInvariantViolated = 28,
 }
 
 

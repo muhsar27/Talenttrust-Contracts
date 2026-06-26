@@ -43,14 +43,7 @@ fn finalize_completed_contract_allows_arbiter_finalizer() {
         super::create_contract_with_arbiter(&env, &client);
 
     assert!(client.deposit_funds(&contract_id, &client_addr, &super::total_milestone_amount()));
-
-    // Release all milestones to reach Completed state.
-    for idx in 0u32..3u32 {
-        client.approve_milestone_release(&contract_id, &client_addr, &idx);
-        client.release_milestone(&contract_id, &client_addr, &idx);
-    }
-    let _ = freelancer_addr; // silence unused warning
-
+    assert!(client.raise_dispute(&contract_id, &client_addr));
     assert_eq!(
         client.get_contract(&contract_id).status,
         ContractStatus::Completed
@@ -62,7 +55,12 @@ fn finalize_completed_contract_allows_arbiter_finalizer() {
         .get_finalization_record(&contract_id)
         .expect("finalization record should exist");
     assert_eq!(record.finalizer, arbiter_addr);
-    assert_eq!(record.summary.status, ContractStatus::Completed);
+    assert_eq!(record.summary.status, ContractStatus::Disputed);
+    assert_eq!(
+        record.summary.funded_amount,
+        super::total_milestone_amount()
+    );
+    assert_eq!(record.summary.released_amount, 0);
     assert_eq!(
         record.summary.funded_amount,
         super::total_milestone_amount()
