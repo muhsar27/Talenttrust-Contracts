@@ -31,13 +31,13 @@ mod pagination_participant_index;
 mod pause_controls;
 // mod performance; // references .cancel()/.refund()/.dispute() short-name methods
 mod persistence;
-// mod protocol_fees; // requires unimplemented withdraw_protocol_fees
+mod protocol_fees;
 mod refund;
 mod release;
 mod release_authorization;
 mod reputation;
 mod resolution_payouts_prop;
-// mod sac_custody; // SAC token integration — requires SettlementToken feature not yet implemented
+mod sac_custody;
 mod security;
 mod storage;
 mod summary;

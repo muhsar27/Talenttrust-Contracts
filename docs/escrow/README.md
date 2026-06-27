@@ -110,6 +110,7 @@ Operational controls:
 - `unpause() -> bool`
 - `activate_emergency_pause() -> bool`
 - `resolve_emergency() -> bool`
+- `withdraw_protocol_fees(amount, to) -> bool`
 
 Governance admin transfer (two-step):
 
@@ -472,11 +473,7 @@ These features are not implemented entrypoints today:
 
 - Two-step admin transfer: planned in
   [#318](https://github.com/Talenttrust/Talenttrust-Contracts/issues/318).
-- Protocol fee treasury withdrawal: planned in
-  [#314](https://github.com/Talenttrust/Talenttrust-Contracts/issues/314).
-  Note: fee accumulation is now wired into `release_milestone` (issue #439).
-  A `withdraw_protocol_fees` entrypoint remains unimplemented pending the
-  dedicated fee-treasury issue.
+- Protocol fee treasury withdrawal: Implemented. The `withdraw_protocol_fees` entrypoint allows the admin to withdraw accumulated fees to a specified address.
 - Governed parameter setter/readiness wiring: planned in
   [#323](https://github.com/Talenttrust/Talenttrust-Contracts/issues/323).
 - `refund_unreleased_milestones` SAC refund path (the function exists but

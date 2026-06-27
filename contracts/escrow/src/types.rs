@@ -63,6 +63,8 @@ pub enum DataKey {
     ReadinessChecklist,
     // Finalization
     Finalization(u32),
+    // Settlement token
+    SettlementToken,
 }
 
 /// Canonical contract error type for all entrypoint-facing errors.

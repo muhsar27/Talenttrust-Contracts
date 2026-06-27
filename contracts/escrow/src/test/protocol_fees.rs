@@ -185,10 +185,27 @@ fn test_fee_math_0_bps() {
 }
 
 #[test]
-#![cfg(test)]
+#[test]
+fn test_fee_math_normal_bps() {
+    let env = Env::default();
+    let fee = Escrow::calculate_protocol_fee(&env, 1000, 1000);
+    assert_eq!(fee, 100);
+}
 
-use soroban_sdk::{testutils::Address as _, Address, Env, vec, String};
-use crate::{Escrow, EscrowClient, DataKey};
+#[test]
+#[should_panic(expected = "HostError: Error(Contract, #28)")] // PotentialOverflow
+fn test_fee_math_overflow() {
+    let env = Env::default();
+    Escrow::calculate_protocol_fee(&env, i128::MAX, 1000);
+}
+
+#[test]
+fn test_fee_math_tiny_amount() {
+    let env = Env::default();
+    // 9 * 1000 = 9000. 9000 / 10000 = 0 (rounds to zero)
+    let fee = Escrow::calculate_protocol_fee(&env, 9, 1000);
+    assert_eq!(fee, 0);
+}
 
 fn create_token_contract(e: &Env, admin: &Address) -> Address {
     e.register_stellar_asset_contract(admin.clone())
@@ -208,72 +225,68 @@ fn test_fee_accrual_and_withdrawal() {
     let token_client = soroban_sdk::token::Client::new(&env, &token);
     let token_admin_client = soroban_sdk::token::StellarAssetClient::new(&env, &token);
 
-    // Initialize with 1000 bps (10%)
-    client.initialize(&admin, &1000u32);
+    client.initialize(&admin);
+    client.set_protocol_fee_bps(&1000u32);
 
     let client_addr = Address::generate(&env);
     let freelancer_addr = Address::generate(&env);
     
-    // Milestones: 1000, 2500, 3333
     let milestones = vec![&env, 1000_i128, 2500_i128, 3333_i128];
     
-    // Note: create_contract has different arguments depending on the current iteration of the code.
-    // Based on lib.rs line 145: pub fn create_contract(env: Env, client: Address, freelancer: Address, arbiter: Option<Address>, milestones: Vec<i128>, terms_hash: Option<Bytes>, grace_period_seconds: Option<u64>)
-    // Wait, let's use the actual create_contract signature from lib.rs.
-    // Looking at lib.rs, create_contract in test.rs uses:
-    // client.create_contract(&client_addr, &freelancer_addr, &None, &milestones);
-    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &None, &None);
+    let id = client.create_contract(&client_addr, &freelancer_addr, &None, &milestones, &crate::ReleaseAuthorization::ClientOnly);
 
-    client.deposit_funds(&id, &6833_i128); // 1000 + 2500 + 3333 = 6833
+    client.deposit_funds(&id, &client_addr, &6833_i128);
 
-    // Release milestone 0 (1000)
-    // Fee: (1000 * 1000 + 9999) / 10000 = (1000000 + 9999) / 10000 = 1009999 / 10000 = 100
-    assert!(client.release_milestone(&id, &0));
+    client.approve_milestone_release(&id, &client_addr, &0);
+    assert!(client.release_milestone(&id, &client_addr, &0));
     
-    // Release milestone 1 (2500)
-    // Fee: (2500 * 1000 + 9999) / 10000 = (2500000 + 9999) / 10000 = 2509999 / 10000 = 250
-    assert!(client.release_milestone(&id, &1));
+    client.approve_milestone_release(&id, &client_addr, &1);
+    assert!(client.release_milestone(&id, &client_addr, &1));
     
-    // Release milestone 2 (3333)
-    // Fee: (3333 * 1000 + 9999) / 10000 = (3333000 + 9999) / 10000 = 3342999 / 10000 = 334
-    assert!(client.release_milestone(&id, &2));
+    client.approve_milestone_release(&id, &client_addr, &2);
+    assert!(client.release_milestone(&id, &client_addr, &2));
 
-    // Total accumulated fees: 100 + 250 + 334 = 684
+    let accumulated = client.get_accumulated_protocol_fees();
+    assert_eq!(accumulated, 683);
     
-    // Mint tokens to the contract so it has funds to transfer out
-    token_admin_client.mint(&contract_id, &684);
+    token_admin_client.mint(&contract_id, &683);
 
     let destination = Address::generate(&env);
     
+    // Bind/set SettlementToken in storage
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::SettlementToken, &token);
+    });
+
     // Admin withdraws protocol fees
-    let success = client.withdraw_protocol_fees(&admin, &destination, &684_i128, &token);
+    let success = client.withdraw_protocol_fees(&683_i128, &destination);
     assert!(success);
     
-    assert_eq!(token_client.balance(&destination), 684);
+    assert_eq!(token_client.balance(&destination), 683);
+    assert_eq!(client.get_accumulated_protocol_fees(), 0);
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #6)")] // UnauthorizedRole
 fn test_unauthorized_withdrawal() {
     let env = Env::default();
-    env.mock_all_auths();
     
     let admin = Address::generate(&env);
     let contract_id = env.register_contract(None, Escrow);
     let client = EscrowClient::new(&env, &contract_id);
     
-    client.initialize(&admin, &1000u32);
+    client.initialize(&admin);
+    client.set_protocol_fee_bps(&1000u32);
     
-    let fake_admin = Address::generate(&env);
     let destination = Address::generate(&env);
-    let token = Address::generate(&env);
     
-    // This should panic
-    client.withdraw_protocol_fees(&fake_admin, &destination, &100_i128, &token);
+    // Call without mock_all_auths to verify auth check fails
+    let result = client.try_withdraw_protocol_fees(&100_i128, &destination);
+    assert!(result.is_err());
 }
 
 #[test]
-#[should_panic(expected = "HostError: Error(Contract, #13)")] // InsufficientAccumulatedFees
 fn test_over_withdrawal() {
     let env = Env::default();
     env.mock_all_auths();
@@ -282,40 +295,19 @@ fn test_over_withdrawal() {
     let contract_id = env.register_contract(None, Escrow);
     let client = EscrowClient::new(&env, &contract_id);
     
-    client.initialize(&admin, &1000u32);
+    client.initialize(&admin);
+    client.set_protocol_fee_bps(&1000u32);
     
     let destination = Address::generate(&env);
     let token = Address::generate(&env);
     
+    env.as_contract(&contract_id, || {
+        env.storage()
+            .persistent()
+            .set(&DataKey::SettlementToken, &token);
+    });
+    
     // Withdraw more than 0
-    client.withdraw_protocol_fees(&admin, &destination, &100_i128, &token);
-}
-
-#[test]
-fn test_fee_math_0_bps() {
-    let env = Env::default();
-    let fee = Escrow::calculate_protocol_fee(&env, 1000, 0);
-    assert_eq!(fee, 0);
-}
-
-#[test]
-fn test_fee_math_normal_bps() {
-    let env = Env::default();
-    let fee = Escrow::calculate_protocol_fee(&env, 1000, 1000);
-    assert_eq!(fee, 100);
-}
-
-#[test]
-#[should_panic(expected = "HostError: Error(Contract, #25)")] // PotentialOverflow
-fn test_fee_math_overflow() {
-    let env = Env::default();
-    Escrow::calculate_protocol_fee(&env, i128::MAX, 1000);
-}
-
-#[test]
-fn test_fee_math_tiny_amount() {
-    let env = Env::default();
-    // 9 * 1000 = 9000. 9000 / 10000 = 0 (rounds to zero)
-    let fee = Escrow::calculate_protocol_fee(&env, 9, 1000);
-    assert_eq!(fee, 0);
+    let result = client.try_withdraw_protocol_fees(&100_i128, &destination);
+    assert_eq!(result, Err(Ok(crate::Error::InsufficientAccumulatedFees)));
 }

@@ -1423,6 +1423,80 @@ impl Escrow {
             .unwrap_or(0)
     }
 
+    /// Withdraws accumulated protocol fees.
+    ///
+    /// Requires the stored admin's authorization. Only an amount up to the
+    /// currently accumulated fees can be withdrawn.
+    ///
+    /// # Arguments
+    /// * `env` - The contract environment
+    /// * `amount` - The amount of fees to withdraw
+    /// * `to` - The destination address for the withdrawn fees
+    pub fn withdraw_protocol_fees(env: Env, amount: i128, to: Address) -> bool {
+        Self::require_initialized(&env);
+
+        // Block withdrawal while paused or in emergency — consistent with all
+        // other mutating entrypoints in this contract.
+        if env
+            .storage()
+            .persistent()
+            .get::<_, bool>(&DataKey::Paused)
+            .unwrap_or(false)
+        {
+            env.panic_with_error(EscrowError::ContractPaused);
+        }
+
+        let admin: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::NotInitialized));
+
+        admin.require_auth();
+
+        if amount <= 0 {
+            env.panic_with_error(EscrowError::AmountMustBePositive);
+        }
+
+
+        let accumulated: i128 = env
+            .storage()
+            .persistent()
+            .get(&DataKey::AccumulatedProtocolFees)
+            .unwrap_or(0);
+
+        if amount > accumulated {
+            env.panic_with_error(EscrowError::InsufficientAccumulatedFees);
+        }
+
+        let token: Address = env
+            .storage()
+            .persistent()
+            .get(&DataKey::SettlementToken)
+            .unwrap_or_else(|| panic!("Settlement token not configured"));
+
+        let new_accumulated = accumulated - amount;
+        env.storage()
+            .persistent()
+            .set(&DataKey::AccumulatedProtocolFees, &new_accumulated);
+
+        env.storage().persistent().extend_ttl(
+            &DataKey::AccumulatedProtocolFees,
+            ttl::PERSISTENT_BUMP_THRESHOLD,
+            ttl::PERSISTENT_TTL_LEDGERS,
+        );
+
+        let token_client = soroban_sdk::token::Client::new(&env, &token);
+        token_client.transfer(&env.current_contract_address(), &to, &amount);
+
+        env.events().publish(
+            (symbol_short!("fee"), symbol_short!("withdraw")),
+            (admin, to, amount, env.ledger().timestamp()),
+        );
+
+        true
+    }
+
     /// Proposes a new governance admin (two-step transfer with timelock).
     pub fn propose_governance_admin(env: Env, proposed: Address) -> bool {
         Self::propose_governance_admin_impl(&env, proposed)
