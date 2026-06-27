@@ -33,10 +33,9 @@ mod governance;
 mod migration;
 mod ttl;
 mod types;
-mod amount_validation;
 mod utils;
 
-pub use amount_validation::safe_add_amounts;
+pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 pub use dispute::DisputeResolution;
 pub use migration::PendingClientMigration;
 pub use ttl::{ADMIN_ROTATION_MIN_DELAY_LEDGERS, PENDING_MIGRATION_TTL_LEDGERS};
@@ -45,13 +44,13 @@ pub use types::{
     MilestoneApprovals, MilestoneSummary, ReadinessChecklist, ReleaseAuthorization, Reputation,
     CONTRACT_SUMMARY_SCHEMA_VERSION,
 };
-pub use amount_validation::{safe_add_amounts, safe_subtract_amounts};
 
 // Re-export for internal use
 pub(crate) use amount_validation::safe_subtract_amounts;
 
 use soroban_sdk::{
-    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, Symbol, Vec,
+    contract, contracterror, contractimpl, contracttype, symbol_short, Address, Env, String,
+    Symbol, Vec,
 };
 
 #[contract]
@@ -97,18 +96,17 @@ pub enum EscrowError {
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
     AmountMustBePositive = 30,
+    EvidenceTooLong = 31,
+    EmptyComment = 32,
+    CommentTooLong = 33,
+    TooManyMilestones = 34,
+    ExactDepositRequired = 35,
+    InvalidProtocolParameters = 36,
+    TimelockNotElapsed = 37,
 }
 
 
 
-/// Returns `Some(a + b)`, or `None` on overflow.
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
-}
-
-pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
-    a.checked_add(b)
-}
 
 #[contractimpl]
 impl Escrow {
@@ -188,12 +186,8 @@ impl Escrow {
     pub fn get_mainnet_readiness_info(env: Env) -> ReadinessChecklist {
         env.storage()
             .persistent()
-            .set(&DataKey::SettlementToken, &token);
-        env.events().publish(
-            (symbol_short!("settl_tok"), Symbol::new(&env, "bound")),
-            (admin, token, env.ledger().timestamp()),
-        );
-        true
+            .get(&DataKey::ReadinessChecklist)
+            .unwrap_or_default()
     }
 
     /// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
@@ -791,30 +785,6 @@ impl Escrow {
     /// Emits `("emergency", "resolved")` with `(admin, timestamp)` payload.
     /// Sets `emergency_controls_enabled` in the readiness checklist.
     pub fn resolve_emergency(env: Env) -> bool {
-        if env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::Initialized)
-            .unwrap_or(false)
-        {
-            let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
-            admin.require_auth();
-        }
-        env.storage().persistent().set(&DataKey::Emergency, &false);
-        env.storage().persistent().set(&DataKey::Paused, &false);
-        let mut checklist: ReadinessChecklist = env
-            .storage()
-            .persistent()
-            .get(&DataKey::ReadinessChecklist)
-            .unwrap_or_default();
-        checklist.emergency_controls_enabled = true;
-        env.storage()
-            .persistent()
-            .set(&DataKey::ReadinessChecklist, &checklist);
-        true
-    }
-
-    pub fn resolve_emergency(env: Env) -> bool {
         Self::require_initialized(&env);
         let admin: Address = env.storage().persistent().get(&DataKey::Admin).unwrap();
         admin.require_auth();
@@ -829,6 +799,13 @@ impl Escrow {
         env.storage()
             .persistent()
             .set(&DataKey::ReadinessChecklist, &checklist);
+        env.events().publish(
+            (
+                Symbol::new(&env, "emergency"),
+                Symbol::new(&env, "resolved"),
+            ),
+            (admin, env.ledger().timestamp()),
+        );
         true
     }
 
@@ -1109,141 +1086,7 @@ impl Escrow {
         true
     }
 
-    // -----------------------------------------------------------------------
-    // Internal helpers
-    // -----------------------------------------------------------------------
-
-    /// Proposes a client migration for an existing contract.
-    pub fn propose_client_migration(
-        env: Env,
-        contract_id: u32,
-        current_client: Address,
-        new_client: Address,
-    ) -> bool {
-        Self::propose_client_migration_impl(env, contract_id, current_client, new_client)
-    }
-
-    /// Accepts a pending client migration.
-    pub fn accept_client_migration(env: Env, contract_id: u32, new_client: Address) -> bool {
-        Self::accept_client_migration_impl(env, contract_id, new_client)
-    }
-
-    /// Returns true if a live pending client migration exists.
-    pub fn has_pending_client_migration(env: Env, contract_id: u32) -> bool {
-        Self::has_pending_client_migration_impl(env, contract_id)
-    }
-
-    /// Returns the live pending client migration record.
-    pub fn get_pending_client_migration(
-        env: Env,
-        contract_id: u32,
-    ) -> migration::PendingClientMigration {
-        Self::get_pending_client_migration_impl(env, contract_id)
-    }
-
-    // ── Finalization ─────────────────────────────────────────────────────────
-
-    /// Finalizes an escrow contract by writing immutable close metadata.
-    pub fn finalize_contract(env: Env, contract_id: u32, finalizer: Address) -> bool {
-        Self::finalize_contract_impl(env, contract_id, finalizer)
-    }
-
-    /// Returns immutable close metadata for a contract.
-    pub fn get_finalization_record(
-        env: Env,
-        contract_id: u32,
-    ) -> Option<finalize::FinalizationRecord> {
-        Self::get_finalization_record_impl(env, contract_id)
-    }
-
-    // ── Governance ───────────────────────────────────────────────────────────
-
-    /// Sets the protocol fee in basis points.
-    pub fn set_protocol_fee_bps(env: Env, new_bps: u32) -> bool {
-        Self::set_protocol_fee_bps_impl(&env, new_bps)
-    }
-
-    /// Proposes a new governance admin.
-    pub fn propose_governance_admin(env: Env, proposed: Address) -> bool {
-        Self::propose_governance_admin_impl(&env, proposed)
-    }
-
-    /// Accepts a pending governance admin proposal.
-    pub fn accept_governance_admin(env: Env) -> bool {
-        Self::accept_governance_admin_impl(&env)
-    }
-
-    /// Returns the pending governance admin, if any.
-    pub fn get_pending_governance_admin(env: Env) -> Option<Address> {
-        env.storage().persistent().get(&DataKey::PendingAdmin)
-    }
-
-    /// Returns the current governance admin.
-    pub fn get_governance_admin(env: Env) -> Option<Address> {
-        env.storage().persistent().get(&DataKey::Admin)
-    }
-
-    // ── Protocol fee helpers ─────────────────────────────────────────────────
-
-    pub(crate) fn get_protocol_fee_bps(env: &Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<_, u32>(&DataKey::ProtocolFeeBps)
-            .unwrap_or(0)
-    }
-
-    pub(crate) fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-        if fee_bps == 0 {
-            return 0;
-        }
-        amount * fee_bps as i128 / 10_000
-    }
-
-    // ── Internal guards ──────────────────────────────────────────────────────
-
-    /// Panics with `NotInitialized` unless `initialize` has been called.
-    ///
-    /// Called at the top of every lifecycle entrypoint — `create_contract`,
-    /// `deposit_funds`, `release_milestone`, `refund_unreleased_milestones`,
-    /// and `cancel_contract` — so that the admin-controlled safety rails
-    /// (pause, emergency controls, protocol fees) are always in scope before
-    /// any money can move.
-    pub(crate) fn require_initialized(env: &Env) {
-        if !env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::Initialized)
-            .unwrap_or(false)
-        {
-            env.panic_with_error(EscrowError::NotInitialized);
-        }
-    }
-
-    fn is_initialized(env: &Env) -> bool {
-        env.storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::Initialized)
-            .unwrap_or(false)
-    }
-
-    fn get_protocol_fee_bps(env: &Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<_, u32>(&DataKey::ProtocolFeeBps)
-            .unwrap_or(0)
-    }
-
-    fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-        let fee_bps_i128 = fee_bps as i128;
-        amount
-            .checked_mul(fee_bps_i128)
-            .and_then(|v| v.checked_div(10000))
-            .unwrap_or(0)
-    }
-
-    // -----------------------------------------------------------------------
-    // Dispute management
-    // -----------------------------------------------------------------------
+    // ── Dispute management ──────────────────────────────────────────────────
 
     /// Opens a dispute for a funded or partially funded escrow contract.
     ///

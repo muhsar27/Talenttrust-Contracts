@@ -78,6 +78,7 @@ pub fn create_contract_impl(
         released_amount: 0,
         refunded_amount: 0,
         release_authorization,
+        reputation_issued: false,
     };
     env.storage()
         .persistent()

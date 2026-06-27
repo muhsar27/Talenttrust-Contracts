@@ -369,10 +369,12 @@ fn release_milestone_rejects_when_token_unbound() {
                 freelancer: freelancer_addr.clone(),
                 arbiter: None,
                 status: ContractStatus::Funded,
+                total_deposited: total,
                 funded_amount: total,
                 released_amount: 0,
                 refunded_amount: 0,
                 release_authorization: ReleaseAuthorization::ClientOnly,
+                reputation_issued: false,
             },
         );
     });

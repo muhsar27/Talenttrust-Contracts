@@ -7,13 +7,46 @@ use crate::{Contract, ContractStatus, Escrow, EscrowClient, EscrowError, Release
 
 // --- Submodules ---
 
+mod access_control;
+mod accounting_invariants;
+mod admin_auth_helper;
+mod approval_expiry;
+mod authorization_matrix_validation;
+mod cancel_contract;
 mod client_migration;
+mod contract_id_allocation;
+mod create_contract;
+mod create_contract_bounds;
+mod deposit;
 mod dispute;
 mod emergency_controls;
+mod flows;
+// mod governance; // requires unimplemented cancel_governance_admin_proposal
+mod governance_events;
+mod hello;
+mod input_sanitization_amounts;
+mod input_sanitization_identities;
+mod lifecycle;
 mod mainnet_readiness;
+// mod milestone_schedule; // requires unimplemented get/set_milestone_schedule
+mod pagination_participant_index;
+// mod participant_index_pagination; // requires unimplemented list_contracts_by_participant
 mod pause_controls;
+// mod performance; // references .cancel()/.refund()/.dispute() short-name methods
 mod persistence;
+// mod protocol_fees; // requires unimplemented withdraw_protocol_fees
+mod refund;
+mod release;
 mod release_authorization;
+mod reputation;
+mod resolution_payouts_prop;
+// mod sac_custody; // SAC token integration — requires SettlementToken feature not yet implemented
+mod security;
+mod storage;
+mod summary;
+// mod timeout_tests; // requires unimplemented evaluate_milestone_timeout
+mod treasury_rotation_timelock;
+mod ttl_tests;
 
 // --- Shared constants ---
 
@@ -29,6 +62,19 @@ pub fn register_client(env: &Env) -> EscrowClient<'_> {
     let admin = Address::generate(env);
     client.initialize(&admin);
     client
+}
+
+/// Registers the escrow contract without initializing it.
+pub fn register_escrow(env: &Env) -> EscrowClient<'_> {
+    let id = env.register(Escrow, ());
+    EscrowClient::new(env, &id)
+}
+
+/// Returns a default test environment with all auths mocked.
+pub fn setup_env() -> Env {
+    let env = Env::default();
+    env.mock_all_auths();
+    env
 }
 
 pub fn default_milestones(env: &Env) -> soroban_sdk::Vec<i128> {
