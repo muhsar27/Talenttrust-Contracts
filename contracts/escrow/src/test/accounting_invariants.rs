@@ -9,7 +9,7 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{ContractStatus, DepositMode, Escrow, EscrowClient};
+use crate::{ContractStatus, Escrow, EscrowClient, ReleaseAuthorization};
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -60,11 +60,12 @@ fn invariant_holds_after_single_deposit() {
     let id = client.create_contract(
         &ca,
         &fa,
+        &None,
         &vec![&env, 100_i128, 200_i128],
-        &DepositMode::Incremental,
+        &ReleaseAuthorization::ClientOnly,
     );
 
-    client.deposit_funds(&id, &100_i128);
+    client.deposit_funds(&id, &ca, &100_i128);
     assert_invariant(&client, id);
 
     let d = client.get_contract(&id);
@@ -81,11 +82,12 @@ fn invariant_holds_after_full_deposit() {
     let id = client.create_contract(
         &ca,
         &fa,
+        &None,
         &vec![&env, 100_i128, 200_i128],
-        &DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
 
-    client.deposit_funds(&id, &300_i128);
+    client.deposit_funds(&id, &ca, &300_i128);
     assert_invariant(&client, id);
 
     let d = client.get_contract(&id);
@@ -101,22 +103,23 @@ fn invariant_holds_after_each_milestone_release() {
     let id = client.create_contract(
         &ca,
         &fa,
+        &None,
         &vec![&env, 100_i128, 200_i128, 300_i128],
-        &DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
 
-    client.deposit_funds(&id, &600_i128);
+    client.deposit_funds(&id, &ca, &600_i128);
     assert_invariant(&client, id);
 
-    client.release_milestone(&id, &0);
+    client.release_milestone(&id, &ca, &0);
     assert_invariant(&client, id);
     assert_eq!(client.get_contract(&id).released_amount, 100);
 
-    client.release_milestone(&id, &1);
+    client.release_milestone(&id, &ca, &1);
     assert_invariant(&client, id);
     assert_eq!(client.get_contract(&id).released_amount, 300);
 
-    client.release_milestone(&id, &2);
+    client.release_milestone(&id, &ca, &2);
     assert_invariant(&client, id);
     let d = client.get_contract(&id);
     assert_eq!(d.released_amount, 600);
@@ -131,18 +134,19 @@ fn invariant_holds_after_incremental_deposits_then_releases() {
     let id = client.create_contract(
         &ca,
         &fa,
+        &None,
         &vec![&env, 50_i128, 150_i128],
-        &DepositMode::Incremental,
+        &ReleaseAuthorization::ClientOnly,
     );
 
-    client.deposit_funds(&id, &50_i128);
+    client.deposit_funds(&id, &ca, &50_i128);
     assert_invariant(&client, id);
-    client.deposit_funds(&id, &150_i128);
+    client.deposit_funds(&id, &ca, &150_i128);
     assert_invariant(&client, id);
 
-    client.release_milestone(&id, &0);
+    client.release_milestone(&id, &ca, &0);
     assert_invariant(&client, id);
-    client.release_milestone(&id, &1);
+    client.release_milestone(&id, &ca, &1);
     assert_invariant(&client, id);
 
     let d = client.get_contract(&id);

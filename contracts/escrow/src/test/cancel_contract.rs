@@ -10,7 +10,7 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{ContractStatus, Escrow, EscrowClient};
+use crate::{ContractStatus, Escrow, EscrowClient, ReleaseAuthorization};
 
 // ---------------------------------------------------------------------------
 // Test helpers
@@ -45,14 +45,13 @@ fn create_default_contract(
         freelancer_addr,
         arbiter_addr,
         &milestones,
-        &None,
-        &None,
+        &ReleaseAuthorization::ClientOnly,
     )
 }
 
 /// Fund a contract with the full milestone amount (600 total).
-fn fund_contract(_env: &Env, client: &EscrowClient, contract_id: &u32, _funder: &Address) {
-    client.deposit_funds(contract_id, &600_i128);
+fn fund_contract(_env: &Env, client: &EscrowClient, contract_id: &u32, funder: &Address) {
+    client.deposit_funds(contract_id, funder, &600_i128);
 }
 
 // ---------------------------------------------------------------------------
@@ -227,7 +226,7 @@ fn client_cannot_cancel_after_milestone_release() {
     fund_contract(&env, &client, &contract_id, &client_addr);
 
     // Release first milestone (simulate)
-    client.release_milestone(&contract_id, &0);
+    client.release_milestone(&contract_id, &client_addr, &0);
 
     // Client tries to cancel
     client.cancel_contract(&contract_id, &client_addr);
@@ -322,7 +321,7 @@ fn cancellation_with_partial_deposits() {
     let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr, &None);
 
     // Partial funding (only 300 out of 600)
-    client.deposit_funds(&contract_id, &300_i128);
+    client.deposit_funds(&contract_id, &client_addr, &300_i128);
 
     // Client cancels
     assert!(client.cancel_contract(&contract_id, &client_addr));
@@ -383,8 +382,7 @@ fn arbiter_overlap_with_client_rejected() {
         &freelancer_addr,
         &Some(client_addr.clone()),
         &milestones,
-        &None,
-        &None,
+        &ReleaseAuthorization::ClientOnly,
     );
 }
 
@@ -404,8 +402,7 @@ fn arbiter_overlap_with_freelancer_rejected() {
         &freelancer_addr,
         &Some(freelancer_addr.clone()),
         &milestones,
-        &None,
-        &None,
+        &ReleaseAuthorization::ClientOnly,
     );
 }
 
@@ -610,7 +607,7 @@ fn client_can_cancel_from_partially_funded_state() {
     let contract_id = create_default_contract(&env, &client, &client_addr, &freelancer_addr, &None);
 
     // Deposit partial funds (200 out of 600 required)
-    client.deposit_funds(&contract_id, &200_i128);
+    client.deposit_funds(&contract_id, &client_addr, &200_i128);
 
     // Verify PartiallyFunded state
     let contract = client.get_contract(&contract_id);
@@ -692,4 +689,25 @@ fn only_client_or_freelancer_can_cancel() {
 
     // Arbiter (unauthorized role) attempts to cancel Funded state
     client.cancel_contract(&contract_id, &arbiter_addr);
+}
+
+
+#[test]
+fn cancel_emits_status_changed_event() {
+    let env = Env::default();
+    env.mock_all_auths();
+
+    let client = register_client(&env);
+    let (client_addr, freelancer_addr, _) = generate_participants(&env);
+
+    let contract_id =
+        create_default_contract(&env, &client, &client_addr, &freelancer_addr, &None);
+
+    assert!(client.cancel_contract(&contract_id, &client_addr));
+
+    let events = env.events().all();
+
+    assert!(events.iter().any(|e| {
+        format!("{:?}", e).contains("status_changed")
+    }));
 }

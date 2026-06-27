@@ -2,7 +2,7 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env};
 
-use crate::{Escrow, EscrowClient, EscrowError, MAX_MILESTONES, MAX_TOTAL_ESCROW_STROOPS};
+use crate::{Escrow, EscrowClient, Error, MAX_MILESTONES, MAX_TOTAL_ESCROW_STROOPS};
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -67,7 +67,7 @@ fn create_contract_rejects_count_one_above_max_with_error_code() {
     }
     let result = client.try_create_contract(&client_addr, &freelancer_addr, &milestones);
     match result {
-        Err(Ok(EscrowError::TooManyMilestones)) => {}
+        Err(Ok(Error::TooManyMilestones)) => {}
         other => panic!("expected TooManyMilestones, got {:?}", other),
     }
 }
@@ -101,7 +101,7 @@ fn create_contract_rejects_total_one_above_cap() {
     let milestones = vec![&env, MAX_TOTAL_ESCROW_STROOPS + 1];
     let result = client.try_create_contract(&client_addr, &freelancer_addr, &milestones);
     match result {
-        Err(Ok(EscrowError::TotalCapExceeded)) => {}
+        Err(Ok(Error::TotalCapExceeded)) => {}
         other => panic!("expected TotalCapExceeded, got {:?}", other),
     }
 }
@@ -115,7 +115,7 @@ fn create_contract_rejects_total_above_cap_across_milestones() {
     let milestones = vec![&env, half, half];
     let result = client.try_create_contract(&client_addr, &freelancer_addr, &milestones);
     match result {
-        Err(Ok(EscrowError::TotalCapExceeded)) => {}
+        Err(Ok(Error::TotalCapExceeded)) => {}
         other => panic!("expected TotalCapExceeded, got {:?}", other),
     }
 }
@@ -131,7 +131,7 @@ fn create_contract_rejects_i128_max_single_milestone() {
     let milestones = vec![&env, i128::MAX];
     let result = client.try_create_contract(&client_addr, &freelancer_addr, &milestones);
     match result {
-        Err(Ok(EscrowError::TotalCapExceeded)) => {}
+        Err(Ok(Error::TotalCapExceeded)) => {}
         other => panic!("expected TotalCapExceeded for i128::MAX milestone, got {:?}", other),
     }
 }
@@ -146,7 +146,7 @@ fn create_contract_rejects_two_large_milestones_that_would_overflow_i128() {
     let milestones = vec![&env, large, large];
     let result = client.try_create_contract(&client_addr, &freelancer_addr, &milestones);
     match result {
-        Err(Ok(EscrowError::TotalCapExceeded)) => {}
+        Err(Ok(Error::TotalCapExceeded)) => {}
         other => panic!("expected TotalCapExceeded for overflow pair, got {:?}", other),
     }
 }
@@ -166,7 +166,7 @@ fn count_check_fires_before_amount_check() {
     }
     let result = client.try_create_contract(&client_addr, &freelancer_addr, &milestones);
     match result {
-        Err(Ok(EscrowError::TooManyMilestones)) => {}
+        Err(Ok(Error::TooManyMilestones)) => {}
         other => panic!("expected TooManyMilestones (count check first), got {:?}", other),
     }
 }

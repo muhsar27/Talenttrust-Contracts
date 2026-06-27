@@ -1,4 +1,4 @@
-use crate::{ContractStatus, DepositMode, DisputeResolution, Escrow, EscrowClient, EscrowError};
+use crate::{ContractStatus, DepositMode, DisputeResolution, Escrow, EscrowClient, Error, ReleaseAuthorization};
 use soroban_sdk::{testutils::Address as _, testutils::Ledger as _, vec, Address, Env};
 
 fn setup() -> (Env, Address) {
@@ -18,11 +18,12 @@ fn completed_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Address
     let contract_id = client.create_contract(
         &client_addr,
         &freelancer_addr,
+        &None,
         &vec![env, 100_i128],
-        &DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
-    assert!(client.deposit_funds(&contract_id, &100_i128));
-    assert!(client.release_milestone(&contract_id, &0));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &100_i128));
+    assert!(client.release_milestone(&contract_id, &client_addr, &0));
     assert_eq!(
         client.get_contract(&contract_id).status,
         ContractStatus::Completed
@@ -34,14 +35,14 @@ fn disputed_contract(env: &Env, client: &EscrowClient<'_>) -> (Address, Address,
     let client_addr = Address::generate(env);
     let freelancer_addr = Address::generate(env);
     let arbiter = Address::generate(env);
-    let contract_id = client.create_contract_with_arbiter(
+    let contract_id = client.create_contract(
         &client_addr,
         &freelancer_addr,
-        &arbiter,
+        &Some(arbiter.clone()),
         &vec![env, 100_i128],
-        &DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
-    assert!(client.deposit_funds(&contract_id, &100_i128));
+    assert!(client.deposit_funds(&contract_id, &client_addr, &100_i128));
     assert!(client.raise_dispute(&contract_id, &client_addr));
     assert_eq!(
         client.get_contract(&contract_id).status,
@@ -114,7 +115,7 @@ fn finalize_rejects_unauthorized_finalizer() {
 
     super::assert_contract_error(
         client.try_finalize_contract(&contract_id, &outsider),
-        EscrowError::UnauthorizedRole,
+        Error::UnauthorizedRole,
     );
     assert!(client.get_finalization_record(&contract_id).is_none());
 }
@@ -128,13 +129,14 @@ fn finalize_rejects_non_terminal_contract() {
     let contract_id = client.create_contract(
         &client_addr,
         &freelancer_addr,
+        &None,
         &vec![&env, 100_i128],
-        &DepositMode::ExactTotal,
+        &ReleaseAuthorization::ClientOnly,
     );
 
     super::assert_contract_error(
         client.try_finalize_contract(&contract_id, &client_addr),
-        EscrowError::InvalidStatusTransition,
+        Error::InvalidStatusTransition,
     );
     assert!(client.get_finalization_record(&contract_id).is_none());
 }
@@ -148,7 +150,7 @@ fn finalize_is_idempotent_guarded() {
     assert!(client.finalize_contract(&contract_id, &client_addr));
     super::assert_contract_error(
         client.try_finalize_contract(&contract_id, &client_addr),
-        EscrowError::AlreadyFinalized,
+        Error::AlreadyFinalized,
     );
 }
 
@@ -161,20 +163,20 @@ fn finalized_contract_rejects_subsequent_mutations() {
     assert!(client.finalize_contract(&contract_id, &client_addr));
 
     super::assert_contract_error(
-        client.try_deposit_funds(&contract_id, &1_i128),
-        EscrowError::AlreadyFinalized,
+        client.try_deposit_funds(&contract_id, &client_addr, &1_i128),
+        Error::AlreadyFinalized,
     );
     super::assert_contract_error(
-        client.try_release_milestone(&contract_id, &0),
-        EscrowError::AlreadyFinalized,
+        client.try_release_milestone(&contract_id, &client_addr, &0),
+        Error::AlreadyFinalized,
     );
     super::assert_contract_error(
-        client.try_issue_reputation(&contract_id, &client_addr, &freelancer_addr, &5_i128),
-        EscrowError::AlreadyFinalized,
+        client.try_issue_reputation(&contract_id, &client_addr, &5_u32, &soroban_sdk::String::from_str(&env, "Great")),
+        Error::AlreadyFinalized,
     );
     super::assert_contract_error(
         client.try_cancel_contract(&contract_id, &client_addr),
-        EscrowError::AlreadyFinalized,
+        Error::AlreadyFinalized,
     );
 }
 
@@ -188,11 +190,11 @@ fn finalized_dispute_rejects_resolution() {
 
     super::assert_contract_error(
         client.try_resolve_dispute(&contract_id, &arbiter, &DisputeResolution::FullRefund),
-        EscrowError::AlreadyFinalized,
+        Error::AlreadyFinalized,
     );
     super::assert_contract_error(
         client.try_raise_dispute(&contract_id, &client_addr),
-        EscrowError::AlreadyFinalized,
+        Error::AlreadyFinalized,
     );
 }
 
@@ -207,7 +209,7 @@ fn pause_blocks_finalization() {
 
     super::assert_contract_error(
         client.try_finalize_contract(&contract_id, &client_addr),
-        EscrowError::ContractPaused,
+        Error::ContractPaused,
     );
     assert!(client.get_finalization_record(&contract_id).is_none());
 }

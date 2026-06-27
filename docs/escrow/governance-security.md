@@ -14,8 +14,27 @@ resolve emergency mode.
 - `resolve_emergency() -> bool`
 - `is_paused() -> bool`
 - `is_emergency() -> bool`
+- `propose_governance_admin(proposed) -> bool`
+- `accept_governance_admin() -> bool`
+- `get_pending_governance_admin() -> Option<Address>`
+- `get_pending_governance_admin_proposed_at() -> Option<u32>`
 
 All mutating admin controls require the stored admin's Soroban authorization.
+
+### Admin Rotation (Two-Step Transfer)
+To prevent accidental lock-outs, the contract implements a two-step admin rotation:
+1. **Propose**: The current admin proposes a new address. This creates a `PendingAdminProposal` record containing the proposed address and the ledger sequence of the proposal.
+2. **Accept**: The proposed admin must authorize the `accept_governance_admin` call after the `ADMIN_ROTATION_MIN_DELAY_LEDGERS` has elapsed.
+
+**Storage Shape**:
+The pending proposal is stored under `DataKey::PendingAdmin` as a `PendingAdminProposal` struct:
+```rust
+pub struct PendingAdminProposal {
+    pub proposed: Address,
+    pub proposed_at_ledger: u32,
+}
+```
+
 There is no live admin transfer entrypoint.
 
 ## Planned Governance Work

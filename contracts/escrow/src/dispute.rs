@@ -1,6 +1,9 @@
-use soroban_sdk::contracttype;
+use crate::{safe_add_amounts, ContractStatus, Contract as EscrowContractData, EscrowError, DisputeResolution};
 
-use crate::{safe_add_amounts, ContractStatus, EscrowContractData, EscrowError};
+use crate::{safe_add_amounts, Contract, ContractStatus, DataKey, Escrow, EscrowArgs, EscrowClient, Error};
+use soroban_sdk::{contractimpl, symbol_short, Address, Env, Symbol};
+
+// Removed obsolete duplicated `impl Escrow`
 
 /// Resolution selected by the assigned arbiter for a disputed escrow.
 #[contracttype]
@@ -16,6 +19,8 @@ pub enum DisputeResolution {
     Split(i128, i128),
 }
 
+// Removed another obsolete copied chunk
+
 impl DisputeResolution {
     pub fn code(&self) -> u32 {
         match self {
@@ -27,6 +32,7 @@ impl DisputeResolution {
     }
 }
 
+#[allow(dead_code)]
 pub fn resolution_payouts(
     contract: &EscrowContractData,
     resolution: &DisputeResolution,
@@ -50,16 +56,18 @@ pub fn resolution_payouts(
             Ok((available - freelancer_payout, freelancer_payout))
         }
         DisputeResolution::FullPayout => Ok((0, available)),
-        DisputeResolution::Split(client_amount, freelancer_amount) => {
-            if *client_amount < 0 || *freelancer_amount < 0 {
+        DisputeResolution::Split(amounts) => {
+            let client_amount = amounts.client_amount;
+            let freelancer_amount = amounts.freelancer_amount;
+            if client_amount < 0 || freelancer_amount < 0 {
                 return Err(EscrowError::InvalidDisputeSplit);
             }
-            let total = safe_add_amounts(*client_amount, *freelancer_amount)
+            let total = safe_add_amounts(client_amount, freelancer_amount)
                 .ok_or(EscrowError::PotentialOverflow)?;
             if total != available {
                 return Err(EscrowError::InvalidDisputeSplit);
             }
-            Ok((*client_amount, *freelancer_amount))
+            Ok((client_amount, freelancer_amount))
         }
     }
 }

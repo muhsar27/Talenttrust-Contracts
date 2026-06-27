@@ -7,7 +7,7 @@
 //! 2. Calling any entrypoint before `initialize` panics with `NotInitialized`.
 //! 3. A non-admin caller cannot authenticate (Soroban auth failure = panic).
 
-use crate::{Escrow, EscrowClient, EscrowError};
+use crate::{Escrow, EscrowClient, Error};
 use soroban_sdk::{testutils::Address as _, Address, Env};
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -36,14 +36,14 @@ fn setup_uninitialized(env: &Env) -> EscrowClient<'_> {
 fn pause_before_initialize_panics_not_initialized() {
     let env = Env::default();
     let client = setup_uninitialized(&env);
-    super::assert_contract_error(client.try_pause(), EscrowError::NotInitialized);
+    super::assert_contract_error(client.try_pause(), Error::NotInitialized);
 }
 
 #[test]
 fn unpause_before_initialize_panics_not_initialized() {
     let env = Env::default();
     let client = setup_uninitialized(&env);
-    super::assert_contract_error(client.try_unpause(), EscrowError::NotInitialized);
+    super::assert_contract_error(client.try_unpause(), Error::NotInitialized);
 }
 
 #[test]
@@ -52,7 +52,7 @@ fn activate_emergency_pause_before_initialize_panics_not_initialized() {
     let client = setup_uninitialized(&env);
     super::assert_contract_error(
         client.try_activate_emergency_pause(),
-        EscrowError::NotInitialized,
+        Error::NotInitialized,
     );
 }
 
@@ -60,7 +60,7 @@ fn activate_emergency_pause_before_initialize_panics_not_initialized() {
 fn resolve_emergency_before_initialize_panics_not_initialized() {
     let env = Env::default();
     let client = setup_uninitialized(&env);
-    super::assert_contract_error(client.try_resolve_emergency(), EscrowError::NotInitialized);
+    super::assert_contract_error(client.try_resolve_emergency(), Error::NotInitialized);
 }
 
 // ─── Correct admin loaded and authenticated ───────────────────────────────────
@@ -114,6 +114,44 @@ fn resolve_emergency_succeeds_with_admin_auth() {
 // invocation (integration test), not a unit test. The success tests above
 // already prove that `load_and_auth_admin` routes through `require_auth()` —
 // the Soroban auth engine guarantees the panic when no auth is provided.
+
+// ─── Admin rotation tests ─────────────────────────────────────────────────────
+
+/// Proposing an admin stores a `PendingAdminProposal` struct.
+/// We verify that both the proposed address and the anchor ledger
+/// can be retrieved correctly.
+#[test]
+fn pending_admin_proposal_round_trip() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+
+    let proposed_admin = Address::generate(&env);
+    let anchor_ledger = env.ledger().sequence();
+
+    // Propose new admin
+    assert!(client.propose_governance_admin(&proposed_admin));
+
+    // Verify proposed address
+    assert_eq!(
+        client.get_pending_governance_admin(),
+        Some(proposed_admin)
+    );
+
+    // Verify anchor ledger
+    assert_eq!(
+        client.get_pending_governance_admin_proposed_at(),
+        Some(anchor_ledger)
+    );
+}
+
+#[test]
+fn pending_admin_returns_none_when_absent() {
+    let env = Env::default();
+    let (client, _admin) = setup(&env);
+
+    assert_eq!(client.get_pending_governance_admin(), None);
+    assert_eq!(client.get_pending_governance_admin_proposed_at(), None);
+}
 
 // ─── Idempotent / State invariant round-trips ─────────────────────────────────
 

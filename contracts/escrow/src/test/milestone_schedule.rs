@@ -19,10 +19,7 @@
 
 use soroban_sdk::{testutils::Address as _, vec, Address, Env, String, Vec};
 
-use crate::{
-    Escrow, EscrowClient, MilestoneSchedule, ReleaseAuthorization,
-    MAX_SCHEDULE_DESCRIPTION_LEN, MAX_SCHEDULE_TITLE_LEN,
-};
+use crate::{Escrow, EscrowClient, MilestoneSchedule, ReleaseAuthorization, MAX_SCHEDULE_DESCRIPTION_LEN, MAX_SCHEDULE_TITLE_LEN};
 
 // ---------------------------------------------------------------------------
 // Test helpers

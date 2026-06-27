@@ -5,11 +5,7 @@
 
 #[cfg(test)]
 mod tests {
-    use crate::amount_validation::{
-        safe_add_amounts, safe_subtract_amounts, validate_contract_total, validate_deposit_amount,
-        validate_milestone_amounts, validate_single_amount, AmountValidationError,
-        MAX_SINGLE_AMOUNT_STROOPS, MIN_POSITIVE_AMOUNT,
-    };
+    use crate::amount_validation::{safe_add_amounts, safe_subtract_amounts, validate_contract_total, validate_deposit_amount, validate_milestone_amounts, validate_single_amount, Error, MAX_SINGLE_AMOUNT_STROOPS, MIN_POSITIVE_AMOUNT};
     use crate::MAX_TOTAL_ESCROW_STROOPS;
 
     #[test]
@@ -22,15 +18,15 @@ mod tests {
         // Test invalid amounts
         assert_eq!(
             validate_single_amount(0),
-            Err(AmountValidationError::NonPositiveAmount)
+            Err(Error::AmountMustBePositive)
         );
         assert_eq!(
             validate_single_amount(-1),
-            Err(AmountValidationError::NonPositiveAmount)
+            Err(Error::AmountMustBePositive)
         );
         assert_eq!(
             validate_single_amount(MAX_SINGLE_AMOUNT_STROOPS + 1),
-            Err(AmountValidationError::AmountExceedsMaximum)
+            Err(Error::InvalidMilestoneAmount)
         );
     }
 
@@ -52,19 +48,19 @@ mod tests {
         let milestones3 = [100_0000000, 0, 300_0000000]; // Contains zero
         assert_eq!(
             validate_milestone_amounts(&milestones3, MAX_TOTAL_ESCROW_STROOPS),
-            Err(AmountValidationError::NonPositiveAmount)
+            Err(Error::AmountMustBePositive)
         );
 
         let milestones4 = [100_0000000, -50_0000000, 300_0000000]; // Contains negative
         assert_eq!(
             validate_milestone_amounts(&milestones4, MAX_TOTAL_ESCROW_STROOPS),
-            Err(AmountValidationError::NonPositiveAmount)
+            Err(Error::AmountMustBePositive)
         );
 
         let milestones5 = [600_000_0000000, 500_000_0000000]; // Exceeds contract max
         assert_eq!(
             validate_milestone_amounts(&milestones5, MAX_TOTAL_ESCROW_STROOPS),
-            Err(AmountValidationError::ExceedsContractMaximum)
+            Err(Error::InvalidMilestoneAmount)
         );
     }
 
@@ -82,17 +78,17 @@ mod tests {
         // Test invalid deposits
         assert_eq!(
             validate_deposit_amount(0, 0, MAX_TOTAL_ESCROW_STROOPS),
-            Err(AmountValidationError::NonPositiveAmount)
+            Err(Error::AmountMustBePositive)
         );
         assert_eq!(
             validate_deposit_amount(-1, 0, MAX_TOTAL_ESCROW_STROOPS),
-            Err(AmountValidationError::NonPositiveAmount)
+            Err(Error::AmountMustBePositive)
         );
 
         // Test would exceed maximum
         assert_eq!(
             validate_deposit_amount(600_000_0000000, 500_000_0000000, MAX_TOTAL_ESCROW_STROOPS),
-            Err(AmountValidationError::ExceedsContractMaximum)
+            Err(Error::InvalidMilestoneAmount)
         );
     }
 
@@ -107,7 +103,7 @@ mod tests {
         // Test invalid totals
         assert_eq!(
             validate_contract_total(MAX_TOTAL_ESCROW_STROOPS + 1, MAX_TOTAL_ESCROW_STROOPS),
-            Err(AmountValidationError::ExceedsContractMaximum)
+            Err(Error::InvalidMilestoneAmount)
         );
     }
 
@@ -137,7 +133,7 @@ mod tests {
         assert!(validate_single_amount(MAX_SINGLE_AMOUNT_STROOPS).is_ok());
         assert_eq!(
             validate_single_amount(MAX_SINGLE_AMOUNT_STROOPS + 1),
-            Err(AmountValidationError::AmountExceedsMaximum)
+            Err(Error::InvalidMilestoneAmount)
         );
 
         // Test contract boundary
@@ -147,7 +143,7 @@ mod tests {
         let over_boundary_milestones = [MAX_TOTAL_ESCROW_STROOPS + 1];
         assert_eq!(
             validate_milestone_amounts(&over_boundary_milestones, MAX_TOTAL_ESCROW_STROOPS),
-            Err(AmountValidationError::AmountExceedsMaximum)
+            Err(Error::InvalidMilestoneAmount)
         );
     }
 

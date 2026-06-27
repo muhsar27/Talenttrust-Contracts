@@ -1,42 +1,31 @@
 use crate::ttl::{PENDING_APPROVAL_BUMP_THRESHOLD, PENDING_APPROVAL_TTL_LEDGERS};
-use crate::types::{
-    Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization,
-};
+use crate::types::{Contract, ContractStatus, DataKey, Error, Milestone, MilestoneApprovals, ReleaseAuthorization};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
-/// Approves a milestone for release by the caller.
+/// Records the caller's approval for a milestone release in temporary storage.
 ///
-/// Records the approval in temporary storage with TTL expiry.
-/// The approval will automatically expire after PENDING_APPROVAL_TTL_LEDGERS.
+/// Approvals are keyed by `(contract_id, milestone_index)` and live in
+/// `env.storage().temporary()` with a TTL of `PENDING_APPROVAL_TTL_LEDGERS`
+/// (~7 days). Each call resets the TTL. Duplicate approvals from the same
+/// party are rejected.
 ///
-/// # Arguments
-/// * `env` - The contract environment
-/// * `contract_id` - The contract ID
-/// * `milestone_index` - The index of the milestone to approve
-/// * `caller` - The address of the caller (must be client, freelancer, or arbiter)
-///
-/// # Returns
-/// `true` if approval was recorded successfully
+/// For the full approve → check → release → clear flow, including per-mode
+/// required approvers and fail-closed expiry guarantees, see
+/// `docs/escrow/approvals-and-release.md`.
 ///
 /// # Errors
-/// * `ContractNotFound` - If contract doesn't exist
-/// * `InvalidState` - If contract is not in Funded state
-/// * `IndexOutOfBounds` - If milestone index is invalid
-/// * `MilestoneAlreadyReleased` - If milestone was already released
-/// * `UnauthorizedRole` - If caller is not authorized to approve
-/// * `AlreadyApproved` - If caller has already approved this milestone
-///
-/// # Security
-/// - Caller must be authenticated via require_auth()
-/// - Only authorized parties (client/freelancer/arbiter) can approve
-/// - Approvals are stored with TTL and auto-expire
-/// - Duplicate approvals from the same party are rejected
+/// * `ContractNotFound` — contract does not exist
+/// * `InvalidState` — contract is not `Funded` or `PartiallyFunded`
+/// * `IndexOutOfBounds` — milestone index out of range
+/// * `MilestoneAlreadyReleased` — milestone already released
+/// * `UnauthorizedRole` — caller not authorized under the contract's mode
+/// * `AlreadyApproved` — caller already approved this milestone
 pub fn approve_milestone(
     env: &Env,
     contract_id: u32,
     milestone_index: u32,
     caller: &Address,
-) -> Result<bool, Error> {
+) -> Result<bool, EscrowError> {
     // Authenticate caller
     caller.require_auth();
 
@@ -45,11 +34,11 @@ pub fn approve_milestone(
         .storage()
         .persistent()
         .get(&DataKey::Contract(contract_id))
-        .ok_or(Error::ContractNotFound)?;
+        .ok_or(EscrowError::ContractNotFound)?;
 
     // Verify contract is in Funded state
     if contract.status != ContractStatus::Funded {
-        return Err(Error::InvalidState);
+        return Err(EscrowError::InvalidState);
     }
 
     // Load milestones
@@ -58,18 +47,18 @@ pub fn approve_milestone(
         .storage()
         .persistent()
         .get(&(DataKey::Contract(contract_id), milestone_key.clone()))
-        .ok_or(Error::ContractNotFound)?;
+        .ok_or(EscrowError::ContractNotFound)?;
 
     // Validate milestone index
     if milestone_index >= milestones.len() {
-        return Err(Error::IndexOutOfBounds);
+        return Err(EscrowError::IndexOutOfBounds);
     }
 
     let milestone = milestones.get(milestone_index).unwrap();
 
     // Check if milestone is already released
     if milestone.released {
-        return Err(Error::MilestoneAlreadyReleased);
+        return Err(EscrowError::MilestoneAlreadyReleased);
     }
 
     // Determine caller role and check authorization
@@ -79,29 +68,29 @@ pub fn approve_milestone(
 
     // Verify caller is a valid participant
     if !is_client && !is_freelancer && !is_arbiter {
-        return Err(Error::UnauthorizedRole);
+        return Err(EscrowError::UnauthorizedRole);
     }
 
     // Check authorization based on release mode
     match contract.release_authorization {
         ReleaseAuthorization::ClientOnly => {
             if !is_client {
-                return Err(Error::UnauthorizedRole);
+                return Err(EscrowError::UnauthorizedRole);
             }
         }
         ReleaseAuthorization::ArbiterOnly => {
             if !is_arbiter {
-                return Err(Error::UnauthorizedRole);
+                return Err(EscrowError::UnauthorizedRole);
             }
         }
         ReleaseAuthorization::ClientAndArbiter => {
             if !is_client && !is_arbiter {
-                return Err(Error::UnauthorizedRole);
+                return Err(EscrowError::UnauthorizedRole);
             }
         }
         ReleaseAuthorization::MultiSig => {
             if !is_client && !is_freelancer {
-                return Err(Error::UnauthorizedRole);
+                return Err(EscrowError::UnauthorizedRole);
             }
         }
     }
@@ -121,17 +110,17 @@ pub fn approve_milestone(
     // Check for duplicate approval and update
     if is_client {
         if approvals.client_approved {
-            return Err(Error::AlreadyApproved);
+            return Err(EscrowError::AlreadyApproved);
         }
         approvals.client_approved = true;
     } else if is_freelancer {
         if approvals.freelancer_approved {
-            return Err(Error::AlreadyApproved);
+            return Err(EscrowError::AlreadyApproved);
         }
         approvals.freelancer_approved = true;
     } else if is_arbiter {
         if approvals.arbiter_approved {
-            return Err(Error::AlreadyApproved);
+            return Err(EscrowError::AlreadyApproved);
         }
         approvals.arbiter_approved = true;
     }
@@ -148,30 +137,25 @@ pub fn approve_milestone(
     Ok(true)
 }
 
-/// Checks if a milestone has sufficient approvals for release.
+/// Returns whether a milestone has sufficient approvals for release.
 ///
-/// Expired approvals (TTL elapsed) are treated as absent and return None.
+/// Reads `DataKey::MilestoneApprovals(contract_id, milestone_index)` from
+/// temporary storage. Soroban returns `None` for both "never written" and
+/// "TTL elapsed" — both cases produce `Err(InsufficientApprovals)`.
 ///
-/// # Arguments
-/// * `env` - The contract environment
-/// * `contract` - The contract data
-/// * `contract_id` - The contract ID
-/// * `milestone_index` - The milestone index
+/// This is the fail-closed guarantee: an expired approval record is
+/// indistinguishable from no approval and cannot silently authorize a release.
 ///
-/// # Returns
-/// * `Ok(true)` - If sufficient approvals exist and are valid
-/// * `Err(InsufficientApprovals)` - If approvals are missing or insufficient
-/// * `Err(ApprovalExpired)` - If approvals existed but have expired
+/// See `docs/escrow/approvals-and-release.md` for required approvers per mode.
 ///
-/// # Security
-/// - Fail-closed: missing or expired approvals prevent release
-/// - TTL expiry is enforced by Soroban's temporary storage
+/// # Errors
+/// * `InsufficientApprovals` — approvals absent, expired, or below the quorum for this mode
 pub fn check_approvals(
     env: &Env,
     contract: &Contract,
     contract_id: u32,
     milestone_index: u32,
-) -> Result<bool, Error> {
+) -> Result<bool, EscrowError> {
     let approval_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
 
     // Try to load approvals from temporary storage
@@ -179,7 +163,7 @@ pub fn check_approvals(
     let approvals: Option<MilestoneApprovals> = env.storage().temporary().get(&approval_key);
 
     // If no approvals exist (or they expired), fail
-    let approvals = approvals.ok_or(Error::InsufficientApprovals)?;
+    let approvals = approvals.ok_or(EscrowError::InsufficientApprovals)?;
 
     // Check if required approvals are present based on authorization mode
     let sufficient = match contract.release_authorization {
@@ -196,18 +180,15 @@ pub fn check_approvals(
     if sufficient {
         Ok(true)
     } else {
-        Err(Error::InsufficientApprovals)
+        Err(EscrowError::InsufficientApprovals)
     }
 }
 
-/// Clears approval records for a milestone after successful release.
+/// Removes the approval record for a milestone after a successful release.
 ///
-/// This prevents approval reuse and cleans up temporary storage.
-///
-/// # Arguments
-/// * `env` - The contract environment
-/// * `contract_id` - The contract ID
-/// * `milestone_index` - The milestone index
+/// Called by `release_milestone` immediately after state is committed.
+/// Prevents approval reuse and avoids leaving stale entries in temporary
+/// storage until natural TTL expiry.
 pub fn clear_approvals(env: &Env, contract_id: u32, milestone_index: u32) {
     let approval_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
     env.storage().temporary().remove(&approval_key);
@@ -310,7 +291,7 @@ mod tests {
         assert!(result.is_ok());
 
         let check = check_approvals(&env, &contract, contract_id, 0);
-        assert_eq!(check, Err(Error::InsufficientApprovals));
+        assert_eq!(check, Err(EscrowError::InsufficientApprovals));
 
         // Freelancer also approves - now sufficient
         let result = approve_milestone(&env, contract_id, 0, &freelancer);
@@ -365,6 +346,6 @@ mod tests {
 
         // Second approval fails
         let result = approve_milestone(&env, contract_id, 0, &client);
-        assert_eq!(result, Err(Error::AlreadyApproved));
+        assert_eq!(result, Err(EscrowError::AlreadyApproved));
     }
 }
