@@ -1383,7 +1383,7 @@ impl Escrow {
 
         env.events().publish(
             (symbol_short!("dispute"), symbol_short!("resolved")),
-            (contract_id, resolution.code()),
+            (contract_id, resolution.code(), client_payout, freelancer_payout),
         );
 
         true
