@@ -1,4 +1,4 @@
-use crate::{ttl, Contract, ContractStatus, DataKey, EscrowError, Milestone};
+use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone, DepositMode};
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Deposits funds into the contract. Transitions to Funded status when fully funded.
@@ -38,15 +38,25 @@ pub fn deposit_funds_impl(env: &Env, contract_id: u32, caller: Address, amount: 
     if contract.status != ContractStatus::Created {
         env.panic_with_error(EscrowError::InvalidState);
     }
+let milestones: Vec<Milestone> = ttl::load_milestones(&env, contract_id);
+
+    // Validate deposit mode
+    let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
+    let outstanding = total_amount - contract.funded_amount;
+    match contract.deposit_mode {
+        DepositMode::ExactTotal => {
+            if amount != outstanding {
+                env.panic_with_error(Error::DepositModeMismatch);
+            }
+        }
+        DepositMode::Incremental => {}
+    }
 
     contract.funded_amount += amount;
 
-    let milestones: Vec<Milestone> = ttl::load_milestones(&env, contract_id);
-
-    let total_amount: i128 = milestones.iter().map(|m| m.amount).sum();
-
+    // Existing logic for status transition
     if contract.funded_amount >= total_amount && contract.status == ContractStatus::Created {
-       let old_status = contract.status.clone();
+        let old_status = contract.status.clone();
         contract.status = ContractStatus::Funded;
         emit_status_changed(env, contract_id, old_status, ContractStatus::Funded);
     }

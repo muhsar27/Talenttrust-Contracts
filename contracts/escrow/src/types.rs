@@ -31,6 +31,77 @@ pub struct ContractSummary {
     pub milestones: Vec<MilestoneSummary>,
 }
 
+// Removed duplicate Contract definition with missing fields
+
+// ─── Storage keys ──────────────────────────────────────────────────────────────
+
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum DataKey {
+    // Admin / pause / emergency
+    Initialized,
+    Admin,
+    Paused,
+    Emergency,
+    // Contract storage
+    Contract(u32),
+    NextContractId,
+    MilestoneReleased(u32, u32),
+    MilestoneApprovals(u32, u32),
+    // Reputation
+    ReputationIssued(u32),
+    PendingReputationCredits(Address),
+    Reputation(Address),
+    ReputationComment(u32),
+    // Client migration
+    PendingClientMigration(u32),
+    // Protocol / governance
+    GovernanceAdmin,
+    PendingGovernanceAdmin,
+    ProtocolParameters,
+    ProtocolFeeBps,
+    // Two-step admin transfer: pending admin stored here while proposal awaits acceptance
+    PendingAdmin,
+    AccumulatedProtocolFees,
+    GovernedParameters,
+    ReadinessChecklist,
+    // Finalization
+    Finalization(u32),
+}
+
+/// Canonical contract error type for all entrypoint-facing errors.
+#[contracterror]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+#[repr(u32)]
+pub enum Error {
+    IndexOutOfBounds = 3,
+    AlreadyReleased = 4,
+    EmptyRefundRequest = 6,
+    DuplicateMilestoneInRefund = 7,
+    AlreadyRefunded = 8,
+    InsufficientFunds = 9,
+    ContractNotFound = 10,
+    UnauthorizedRole = 11,
+    MissingArbiter = 12,
+    InvalidArbiter = 13,
+    InvalidParticipants = 14,
+    AmountMustBePositive = 15,
+    InvalidState = 16,
+    MilestoneAlreadyReleased = 17,
+    AlreadyApproved = 18,
+    DepositModeMismatch = 31,
+    InsufficientApprovals = 20,
+    FreelancerMismatch = 21,
+    InvalidRating = 22,
+    ReputationAlreadyIssued = 23,
+    EmptyMilestones = 25,
+    InvalidMilestoneAmount = 26,
+    ContractIdCollision = 27,
+    ContractIdOverflow = 28,
+    EmptyComment = 29,
+    CommentTooLong = 30,
+}
+
 /// Contract lifecycle states
 #[contracttype]
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -68,6 +139,8 @@ pub struct Contract {
     pub refunded_amount: i128,
     pub release_authorization: ReleaseAuthorization,
     pub reputation_issued: bool,
+    /// The deposit mode determines whether funds must be deposited in a single exact total or incrementally.
+    pub deposit_mode: DepositMode,
 }
 
 #[contracttype]

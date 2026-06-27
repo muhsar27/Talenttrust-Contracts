@@ -1,6 +1,4 @@
-use crate::{
-    ttl, Contract, ContractStatus, DataKey, EscrowError, Milestone, ReleaseAuthorization,
-};
+use crate::{ttl, Contract, ContractStatus, DataKey, Error, Milestone, ReleaseAuthorization, DepositMode};
 use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
 
 /// Creates a new escrow contract with the specified client, freelancer, and milestone amounts.
@@ -77,6 +75,7 @@ pub fn create_contract_impl(
         funded_amount: 0,
         released_amount: 0,
         refunded_amount: 0,
+        deposit_mode: DepositMode::Incremental,
         release_authorization,
         reputation_issued: false,
     };
