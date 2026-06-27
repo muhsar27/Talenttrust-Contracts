@@ -78,10 +78,19 @@ pub fn create_contract_impl(
         }
     }
 
-    let total_milestones_amount: i128 = milestones.iter().fold(0, |acc, &x| acc.checked_add(x).unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow)));
+    let total_milestones_amount: i128 = milestones.iter().fold(0, |acc, &x| {
+        acc.checked_add(x)
+            .unwrap_or_else(|| env.panic_with_error(EscrowError::PotentialOverflow))
+    });
 
-    if let Some(params) = env.storage().persistent().get::<_, GovernedParameters>(&DataKey::GovernedParameters) {
-        if params.max_escrow_total_stroops > 0 && total_milestones_amount > params.max_escrow_total_stroops {
+    if let Some(params) = env
+        .storage()
+        .persistent()
+        .get::<_, GovernedParameters>(&DataKey::GovernedParameters)
+    {
+        if params.max_escrow_total_stroops > 0
+            && total_milestones_amount > params.max_escrow_total_stroops
+        {
             env.panic_with_error(EscrowError::EscrowCapExceeded);
         }
     }

@@ -12,6 +12,8 @@ resolve emergency mode.
 - `unpause() -> bool`
 - `activate_emergency_pause() -> bool`
 - `resolve_emergency() -> bool`
+- `propose_governance_admin(proposed) -> bool`
+- `accept_governance_admin() -> bool`
 - `set_governed_params(admin, fee_bps, max_cap) -> bool`
 - `is_paused() -> bool`
 - `is_emergency() -> bool`
@@ -48,6 +50,15 @@ The contract supports a governed maximum escrow cap (`max_escrow_total_stroops`)
 - If `deposit_funds` would push the contract's funded amount above the cap,
   it fails with `EscrowCapExceeded`.
 - A cap of zero is treated as "no limit".
+
+### Admin Rotation Timelock
+
+To prevent sudden treasury or administrative takeover, the contract implements
+a rotation timelock for admin changes:
+- Admin changes must be proposed via `propose_governance_admin`.
+- The proposed admin can only be accepted via `accept_governance_admin` after
+  `ADMIN_ROTATION_MIN_DELAY_LEDGERS` (~2 days) have elapsed since the proposal.
+- If acceptance is attempted before the delay, it fails with `TimelockNotElapsed`.
 
 ## Planned Governance Work
 

@@ -191,3 +191,100 @@ fn pause_unpause_does_not_affect_emergency_flag() {
         "unpause must not set emergency flag"
     );
 }
+
+// ─── Admin rotation timelock tests ────────────────────────────────────────────
+//
+// These tests validate the `TimelockNotElapsed` gate in `accept_governance_admin`.
+// The rotation is only permitted after `ADMIN_ROTATION_MIN_DELAY_LEDGERS` have elapsed.
+//
+// Requirements:
+// 1. Propose admin → Wait < delay → Reject (TimelockNotElapsed)
+// 2. Propose admin → Wait == delay → Accept (Succeeds)
+// 3. Propose admin → Wait > delay → Accept (Succeeds)
+// 4. Accept without proposal → Reject (InvalidState)
+// 5. Verify event payload: (old_admin, new_admin, timestamp)
+//
+// Note: Ledger sequence is advanced using `env.ledger().set_sequence()`.
+
+#[test]
+fn accept_governance_admin_before_delay_panics_timelock_not_elapsed() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_governance_admin(&new_admin);
+    let proposed_at = env.ledger().sequence();
+
+    // Advance to just before the delay
+    env.ledger().set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS - 1);
+
+    super::assert_contract_error(client.try_accept_governance_admin(), EscrowError::TimelockNotElapsed);
+}
+
+#[test]
+fn accept_governance_admin_at_delay_succeeds() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_governance_admin(&new_admin);
+    let proposed_at = env.ledger().sequence();
+
+    // Advance to exactly the delay
+    env.ledger().set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS);
+
+    assert!(client.accept_governance_admin());
+    assert_eq!(client.get_governance_admin(), Some(new_admin));
+    assert_eq!(client.get_pending_governance_admin(), None);
+}
+
+#[test]
+fn accept_governance_admin_after_delay_succeeds() {
+    let env = Env::default();
+    let (client, admin) = setup(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_governance_admin(&new_admin);
+    let proposed_at = env.ledger().sequence();
+
+    // Advance way past the delay
+    env.ledger().set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS + 1000);
+
+    assert!(client.accept_governance_admin());
+    assert_eq!(client.get_governance_admin(), Some(new_admin));
+    assert_eq!(client.get_pending_governance_admin(), None);
+}
+
+#[test]
+fn accept_governance_admin_no_proposal_panics_invalid_state() {
+    let env = Env::default();
+    let (client, _admin) = setup(&env);
+
+    super::assert_contract_error(client.try_accept_governance_admin(), crate::Error::InvalidState);
+}
+
+#[test]
+fn accept_governance_admin_event_payload_is_correct() {
+    let env = Env::default();
+    let (client, old_admin) = setup(&env);
+    let new_admin = Address::generate(&env);
+
+    client.propose_governance_admin(&new_admin);
+    let proposed_at = env.ledger().sequence();
+    env.ledger().set_sequence(proposed_at + ADMIN_ROTATION_MIN_DELAY_LEDGERS);
+
+    let timestamp = env.ledger().timestamp();
+    assert!(client.accept_governance_admin());
+
+    // Check events
+    let events = env.events().all();
+    let accepted_event = events.iter().find(|(topic, _payload, _)| {
+        topic == &(&symbol_short!("admin"), &Symbol::new(&env, "accepted"))
+    }).expect("Accepted event not found");
+
+    let payload = accepted_event.1;
+    assert_eq!(payload[0], old_admin.into());
+    assert_eq!(payload[1], new_admin.into());
+    assert_eq!(payload[2], timestamp.into());
+}
+

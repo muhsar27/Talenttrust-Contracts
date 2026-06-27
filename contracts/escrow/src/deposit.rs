@@ -1,7 +1,7 @@
 use crate::{
     ttl, Contract, ContractStatus, DataKey, Error, GovernedParameters, Milestone,
 };
-use soroban_sdk::{symbol_short, Address, Env, Symbol, Vec};
+use soroban_sdk::{Address, Env, Symbol, Vec};
 
 /// Deposits funds into the contract and allocates them across milestones in order.
 ///

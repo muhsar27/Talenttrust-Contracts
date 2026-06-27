@@ -54,6 +54,15 @@ pub type EscrowError = Error;
 #[contract]
 pub struct Escrow;
 
+
+
+
+
+/// Returns `Some(a + b)`, or `None` on overflow.
+pub fn safe_add_amounts(a: i128, b: i128) -> Option<i128> {
+    a.checked_add(b)
+}
+
 #[contractimpl]
 impl Escrow {
     // ── Hello / CI ───────────────────────────────────────────────────────────
