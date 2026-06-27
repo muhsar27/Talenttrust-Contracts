@@ -1,5 +1,11 @@
 #![cfg(test)]
 
+//! Client migration integration tests for issue #556.
+//!
+//! These tests exercise the single public wrapper set in `lib.rs`, each of which
+//! delegates to the canonical `migration::*_impl` functions in `migration.rs`.
+//! Covered paths: propose, accept, has-pending, and get-pending.
+
 use crate::migration::PendingClientMigration;
 use crate::ttl::PENDING_MIGRATION_TTL_LEDGERS;
 use crate::{
