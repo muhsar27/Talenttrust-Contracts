@@ -4,22 +4,26 @@
 mod tests {
     use super::*;
     use proptest::prelude::*;
-    use soroban_sdk::Address;
+    use soroban_sdk::{Address, Env};
+
+    use crate::{Contract, ContractStatus, ReleaseAuthorization};
+    use crate::dispute::{resolution_payouts, DisputeResolution};
 
     // Helper to create a dummy contract with given funded, released, refunded amounts
     fn dummy_contract(available: i128) -> Contract {
         // For simplicity, create a contract where funded_amount = available,
         // and released and refunded are zero. This satisfies the calculation
         // of `available` inside `resolution_payouts`.
+        let env = Env::default();
         Contract {
-            client: Address::generate(&Env::default()),
-            freelancer: Address::generate(&Env::default()),
-            arbiter: Some(Address::generate(&Env::default())),
-            status: ContractStatus::Funded,
-            total_deposited: available,
+            client: Address::generate(&env),
+            freelancer: Address::generate(&env),
+            arbiter: Some(Address::generate(&env)),
             funded_amount: available,
             released_amount: 0,
             refunded_amount: 0,
+
+            status: ContractStatus::Funded,
             release_authorization: ReleaseAuthorization::ClientOnly,
             reputation_issued: false,
         }

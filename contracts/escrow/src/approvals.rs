@@ -3,33 +3,24 @@ use crate::types::{Contract, ContractStatus, DataKey, Milestone, MilestoneApprov
 use crate::EscrowError;
 use soroban_sdk::{Address, Env, Symbol, Vec};
 
-/// Approves a milestone for release by the caller.
-/// 
-/// Records the approval in temporary storage with TTL expiry.
-/// The approval will automatically expire after PENDING_APPROVAL_TTL_LEDGERS.
-/// 
-/// # Arguments
-/// * `env` - The contract environment
-/// * `contract_id` - The contract ID
-/// * `milestone_index` - The index of the milestone to approve
-/// * `caller` - The address of the caller (must be client, freelancer, or arbiter)
-/// 
-/// # Returns
-/// `true` if approval was recorded successfully
-/// 
-/// # EscrowErrors
-/// * `ContractNotFound` - If contract doesn't exist
-/// * `InvalidState` - If contract is not in Funded state
-/// * `IndexOutOfBounds` - If milestone index is invalid
-/// * `MilestoneAlreadyReleased` - If milestone was already released
-/// * `UnauthorizedRole` - If caller is not authorized to approve
-/// * `AlreadyApproved` - If caller has already approved this milestone
-/// 
-/// # Security
-/// - Caller must be authenticated via require_auth()
-/// - Only authorized parties (client/freelancer/arbiter) can approve
-/// - Approvals are stored with TTL and auto-expire
-/// - Duplicate approvals from the same party are rejected
+/// Records the caller's approval for a milestone release in temporary storage.
+///
+/// Approvals are keyed by `(contract_id, milestone_index)` and live in
+/// `env.storage().temporary()` with a TTL of `PENDING_APPROVAL_TTL_LEDGERS`
+/// (~7 days). Each call resets the TTL. Duplicate approvals from the same
+/// party are rejected.
+///
+/// For the full approve → check → release → clear flow, including per-mode
+/// required approvers and fail-closed expiry guarantees, see
+/// `docs/escrow/approvals-and-release.md`.
+///
+/// # Errors
+/// * `ContractNotFound` — contract does not exist
+/// * `InvalidState` — contract is not `Funded` or `PartiallyFunded`
+/// * `IndexOutOfBounds` — milestone index out of range
+/// * `MilestoneAlreadyReleased` — milestone already released
+/// * `UnauthorizedRole` — caller not authorized under the contract's mode
+/// * `AlreadyApproved` — caller already approved this milestone
 pub fn approve_milestone(
     env: &Env,
     contract_id: u32,
@@ -147,24 +138,19 @@ pub fn approve_milestone(
     Ok(true)
 }
 
-/// Checks if a milestone has sufficient approvals for release.
-/// 
-/// Expired approvals (TTL elapsed) are treated as absent and return None.
-/// 
-/// # Arguments
-/// * `env` - The contract environment
-/// * `contract` - The contract data
-/// * `contract_id` - The contract ID
-/// * `milestone_index` - The milestone index
-/// 
-/// # Returns
-/// * `Ok(true)` - If sufficient approvals exist and are valid
-/// * `Err(InsufficientApprovals)` - If approvals are missing or insufficient
-/// * `Err(ApprovalExpired)` - If approvals existed but have expired
-/// 
-/// # Security
-/// - Fail-closed: missing or expired approvals prevent release
-/// - TTL expiry is enforced by Soroban's temporary storage
+/// Returns whether a milestone has sufficient approvals for release.
+///
+/// Reads `DataKey::MilestoneApprovals(contract_id, milestone_index)` from
+/// temporary storage. Soroban returns `None` for both "never written" and
+/// "TTL elapsed" — both cases produce `Err(InsufficientApprovals)`.
+///
+/// This is the fail-closed guarantee: an expired approval record is
+/// indistinguishable from no approval and cannot silently authorize a release.
+///
+/// See `docs/escrow/approvals-and-release.md` for required approvers per mode.
+///
+/// # Errors
+/// * `InsufficientApprovals` — approvals absent, expired, or below the quorum for this mode
 pub fn check_approvals(
     env: &Env,
     contract: &Contract,
@@ -202,14 +188,11 @@ pub fn check_approvals(
     }
 }
 
-/// Clears approval records for a milestone after successful release.
-/// 
-/// This prevents approval reuse and cleans up temporary storage.
-/// 
-/// # Arguments
-/// * `env` - The contract environment
-/// * `contract_id` - The contract ID
-/// * `milestone_index` - The milestone index
+/// Removes the approval record for a milestone after a successful release.
+///
+/// Called by `release_milestone` immediately after state is committed.
+/// Prevents approval reuse and avoids leaving stale entries in temporary
+/// storage until natural TTL expiry.
 pub fn clear_approvals(env: &Env, contract_id: u32, milestone_index: u32) {
     let approval_key = DataKey::MilestoneApprovals(contract_id, milestone_index);
     env.storage().temporary().remove(&approval_key);

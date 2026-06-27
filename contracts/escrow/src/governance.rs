@@ -68,4 +68,20 @@ impl Escrow {
     pub fn get_governance_admin(env: Env) -> Option<Address> {
         env.storage().persistent().get(&DataKey::Admin)
     }
+
+    /// Returns the current protocol fee in basis points.
+    pub fn get_protocol_fee_bps(env: Env) -> u32 {
+        env.storage()
+            .persistent()
+            .get::<_, u32>(&DataKey::ProtocolFeeBps)
+            .unwrap_or(0)
+    }
+
+    /// Returns the total accumulated protocol fees.
+    pub fn get_accumulated_protocol_fees(env: Env) -> i128 {
+        env.storage()
+            .persistent()
+            .get::<_, i128>(&DataKey::AccumulatedProtocolFees)
+            .unwrap_or(0)
+    }
 }

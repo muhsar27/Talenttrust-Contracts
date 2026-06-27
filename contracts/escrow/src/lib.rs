@@ -97,6 +97,14 @@ pub enum EscrowError {
     PotentialOverflow = 28,
     AlreadyFinalized = 29,
     AmountMustBePositive = 30,
+    /// Returned by `submit_work_evidence` when the evidence string exceeds 256 bytes.
+    EvidenceTooLong = 31,
+    EmptyComment = 32,
+    CommentTooLong = 33,
+    TooManyMilestones = 34,
+    ExactDepositRequired = 35,
+    InvalidProtocolParameters = 36,
+    TimelockNotElapsed = 37,
 }
 
 
@@ -354,7 +362,17 @@ impl Escrow {
 
     /// Approves a milestone for release.
     ///
-    /// Records the approval in temporary storage with TTL expiry.
+    /// Records the caller's approval in temporary storage with a TTL of
+    /// `PENDING_APPROVAL_TTL_LEDGERS` (~7 days). Each call resets the TTL.
+    /// Duplicate approvals from the same party are rejected.
+    ///
+    /// Required approvers per mode:
+    /// - `ClientOnly` — client only
+    /// - `ArbiterOnly` — arbiter only
+    /// - `ClientAndArbiter` — client or arbiter (one is enough)
+    /// - `MultiSig` — both client and freelancer must approve
+    ///
+    /// See `docs/escrow/approvals-and-release.md` for the full flow.
     pub fn approve_milestone_release(
         env: Env,
         contract_id: u32,
@@ -387,6 +405,13 @@ impl Escrow {
     /// MultiSig semantics are client-and-freelancer approval. A MultiSig
     /// milestone can be released only by the stored client or freelancer after
     /// both of those addresses have approved the same milestone.
+    ///
+    /// Approvals are cleared from temporary storage after a successful release.
+    /// Missing or expired approvals are fail-closed — they produce
+    /// `InsufficientApprovals` and the call panics without mutating state.
+    ///
+    /// See `approve_milestone_release`, `get_milestone_approvals`, and
+    /// `docs/escrow/approvals-and-release.md` for the full flow.
     ///
     /// # Arguments
     /// * `env` - The contract environment
@@ -889,15 +914,12 @@ impl Escrow {
     }
 
     /// Retrieves approval status for a milestone.
-    /// Returns None if approvals have expired or don't exist.
     ///
-    /// # Arguments
-    /// * `env` - The contract environment
-    /// * `contract_id` - The contract ID
-    /// * `milestone_index` - The milestone index
+    /// Returns `None` when no approval record exists or when the TTL has
+    /// elapsed. Treat `None` and an all-`false` struct identically — neither
+    /// unblocks `release_milestone`.
     ///
-    /// # Returns
-    /// Optional MilestoneApprovals struct
+    /// See `approve_milestone_release` and `docs/escrow/approvals-and-release.md`.
     pub fn get_milestone_approvals(
         env: Env,
         contract_id: u32,
@@ -1042,7 +1064,6 @@ impl Escrow {
         env.storage()
             .persistent()
             .set(&DataKey::ReadinessChecklist, &checklist);
-
         env.events().publish(
             (
                 Symbol::new(&env, "emergency"),
@@ -1369,139 +1390,6 @@ impl Escrow {
         );
 
         true
-    }
-
-    /// Returns the work evidence for a single milestone, or `None` if the
-    /// milestone index is out of bounds or no evidence was submitted.
-    ///
-    /// # Arguments
-    /// * `contract_id` - The escrow contract ID
-    /// * `milestone_index` - Zero-based index of the milestone
-    ///
-    /// # Returns
-    /// `Some(String)` with the evidence reference if it exists,
-    /// `None` when the index is out of bounds or the milestone has no evidence.
-    ///
-    /// # Panics
-    /// Panics with `ContractNotFound` if `contract_id` was never allocated.
-    ///
-    /// # TTL
-    /// Extends the milestones vector's persistent TTL on read,
-    /// consistent with `get_milestones`.
-    pub fn get_work_evidence(env: Env, contract_id: u32, milestone_index: u32) -> Option<String> {
-        let milestone_key = Symbol::new(&env, "milestones");
-        let milestones: Vec<Milestone> = env
-            .storage()
-            .persistent()
-            .get(&(DataKey::Contract(contract_id), milestone_key))
-            .unwrap_or_else(|| env.panic_with_error(Error::ContractNotFound));
-
-        ttl::extend_milestone_ttl(&env, contract_id);
-
-        if milestone_index >= milestones.len() {
-            return None;
-        }
-
-        milestones.get(milestone_index).unwrap().work_evidence
-    }
-
-    // ── Internal helpers ──────────────────────────────────────────────────────
-
-    /// Panics with `NotInitialized` unless `initialize` has been called.
-    pub(crate) fn require_initialized(env: &Env) {
-        if !env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::Initialized)
-            .unwrap_or(false)
-        {
-            env.panic_with_error(EscrowError::NotInitialized);
-        }
-    }
-
-    /// Returns true if the contract is initialized.
-    fn is_initialized(env: &Env) -> bool {
-        env.storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::Initialized)
-            .unwrap_or(false)
-    }
-
-    /// Returns the protocol fee in basis points.
-    fn get_protocol_fee_bps(env: &Env) -> u32 {
-        env.storage()
-            .persistent()
-            .get::<_, u32>(&DataKey::ProtocolFeeBps)
-            .unwrap_or(0)
-    }
-
-    /// Calculates the protocol fee for a given amount and fee rate.
-    fn calculate_protocol_fee(amount: i128, fee_bps: u32) -> i128 {
-        let fee_bps_i128 = fee_bps as i128;
-        amount
-            .checked_mul(fee_bps_i128)
-            .and_then(|v| v.checked_div(10000))
-            .unwrap_or(0)
-    }
-
-    /// Panics with `ContractPaused` if the contract is paused.
-    pub(crate) fn require_not_paused(env: &Env) {
-        if env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::Paused)
-            .unwrap_or(false)
-        {
-            env.panic_with_error(EscrowError::ContractPaused);
-        }
-        if env
-            .storage()
-            .persistent()
-            .get::<_, bool>(&DataKey::Emergency)
-            .unwrap_or(false)
-        {
-            env.panic_with_error(EscrowError::EmergencyActive);
-        }
-    }
-
-    /// Panics with `AlreadyFinalized` if the contract has a finalization record.
-    pub(crate) fn require_not_finalized(env: &Env, contract_id: u32) {
-        if finalize::has_finalization_record(env, contract_id) {
-            env.panic_with_error(EscrowError::AlreadyFinalized);
-        }
-
-        // Verify caller is the assigned arbiter
-        match &contract.arbiter {
-            Some(contract_arbiter) if *contract_arbiter == arbiter => {}
-            _ => env.panic_with_error(EscrowError::UnauthorizedRole),
-        }
-
-        // Compute payouts based on resolution
-        let (client_payout, freelancer_payout) =
-            dispute::resolution_payouts(&contract, &resolution)
-                .unwrap_or_else(|e| env.panic_with_error(e));
-
-        // Update contract accounting
-        contract.refunded_amount += client_payout;
-        contract.released_amount += freelancer_payout;
-
-        // Set final status
-        contract.status = dispute::final_status_after_resolution(&contract);
-
-        env.storage()
-            .persistent()
-            .set(&DataKey::Contract(contract_id), &contract);
-
-        ttl::extend_contract_ttl(&env, contract_id);
-
-        env.events().publish(
-            (symbol_short!("dispute"), symbol_short!("resolved")),
-            (contract_id, resolution.code(), client_payout, freelancer_payout),
-        );
-
-        true
-    }
-}
 
 #[cfg(test)]
 mod test;
